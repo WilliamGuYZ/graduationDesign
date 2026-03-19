@@ -1,0 +1,16 @@
+numpy==2.2.3
+tqdm==4.67.1
+pydantic==2.10.6
+pyyaml==6.0.2
+rich==13.9.4
+requests==2.32.3
+
+# 训练/推理（后续接入GPU时需要）
+torch==2.6.0
+transformers==4.49.0
+datasets==3.3.2
+accelerate==1.4.0
+peft==0.14.0
+
+# （可选）检索增强：BGE-M3/FlagEmbedding 常用依赖
+FlagEmbedding==1.3.4
