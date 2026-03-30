@@ -1,1 +1,0 @@
-{"task_id": "mock/python/0", "language": "python", "instruction": "实现函数 solve(x)，返回 x 本身。", "input_spec": "x: int", "output_spec": "int", "prompt": "Write a Python function solve(x) that returns x.", "tests": "assert ns.solve(1)==1\nassert ns.solve(-3)==-3\n", "meta": {"source": "mock"}}
