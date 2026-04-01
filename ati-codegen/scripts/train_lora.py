@@ -16,6 +16,16 @@ from _bootstrap import bootstrap_src_path
 bootstrap_src_path()
 
 
+def build_text(ex: dict) -> str:
+    """从 instruction/input/output 构建训练文本"""
+    input_text = ex["input"] if ex["input"] else "无"
+    return "\n\n".join([
+        f"### Instruction\n{ex['instruction']}",
+        f"### Input\n{input_text}",
+        f"### Output\n{ex['output']}",
+    ])
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--base_model", required=True, help="HF 模型名或本地路径")
@@ -50,7 +60,7 @@ def main() -> int:
     ds = load_dataset("json", data_files={"train": args.dataset_path})
 
     def tokenize(ex):
-        text = ex["prompt"]
+        text = build_text(ex)
         return tokenizer(text, truncation=True, max_length=1024)
 
     ds_tok = ds.map(tokenize, remove_columns=ds["train"].column_names)
@@ -84,4 +94,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

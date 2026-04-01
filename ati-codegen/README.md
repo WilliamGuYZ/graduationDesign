@@ -42,7 +42,6 @@ python scripts/make_mock_dataset.py --out data/processed/mock.jsonl
 ```bash
 python scripts/eval_passk.py --dataset data/processed/mock.jsonl --k 1
 ```
-
 ### 第3-4周：LeetCode 数据采集与预处理（JSONL）
 
 我们提供了 `leetcode.cn` 的 GraphQL 抓取脚本，把题面清洗成纯文本，并按语言输出函数签名（`codeSnippets`），最终落盘 JSONL。
