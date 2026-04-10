@@ -1,0 +1,322 @@
+import os
+
+# ===== 环境变量 =====
+os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+
+import json
+import re
+import sys
+from io import StringIO
+from tqdm import tqdm
+import multiprocessing as mp
+from concurrent.futures import ProcessPoolExecutor
+from math import comb
+
+from vllm import LLM, SamplingParams
+
+
+# =============================
+# CONFIG
+# =============================
+
+MODEL_PATH = "../models/Qwen2.5-Coder-7B"
+DATASET_PATH = "../data/processed/eval_code.jsonl"
+
+K = 5
+
+MAX_NEW_TOKENS = 512
+BATCH_SIZE = 32
+
+TEST_WORKERS = 16
+TIMEOUT = 3
+
+
+# =============================
+# LOAD DATASET
+# =============================
+
+def load_dataset(path):
+
+    data = []
+
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            data.append(json.loads(line))
+
+    data = data[:100]
+    return data
+
+
+# =============================
+# PROMPT
+# =============================
+
+def build_prompt(problem):
+
+    return f"""
+You are a competitive programming expert.
+
+Solve the following problem.
+
+Write a Python program that reads input from stdin
+and prints output to stdout.
+
+Only output the code.
+
+Problem:
+{problem}
+
+Python code:
+"""
+
+
+# =============================
+# CODE EXTRACTION
+# =============================
+
+def extract_code(text):
+
+    match = re.search(r"```python(.*?)```", text, re.S)
+
+    if match:
+        return match.group(1)
+
+    match = re.search(r"```(.*?)```", text, re.S)
+
+    if match:
+        return match.group(1)
+
+    return text
+
+
+def clean_code(code):
+
+    lines = code.split("\n")
+
+    start = 0
+
+    for i, line in enumerate(lines):
+
+        if line.startswith("import") or line.startswith("from") or line.startswith("def"):
+            start = i
+            break
+
+    return "\n".join(lines[start:])
+
+
+# =============================
+# OUTPUT NORMALIZATION
+# =============================
+
+def normalize_output(s):
+
+    return " ".join(s.strip().split())
+
+
+# =============================
+# RUN TEST
+# =============================
+
+def run_single_test(code, test):
+
+    try:
+
+        stdin_backup = sys.stdin
+        stdout_backup = sys.stdout
+
+        sys.stdin = StringIO(test["input"])
+        sys.stdout = StringIO()
+
+        exec(code, {"__name__": "__main__"})
+
+        output = sys.stdout.getvalue()
+
+        sys.stdin = stdin_backup
+        sys.stdout = stdout_backup
+
+        output = normalize_output(output)
+        expected = normalize_output(test["output"])
+
+        return output == expected
+
+    except Exception:
+
+        return False
+
+
+def run_tests(code, tests):
+
+    for test in tests:
+
+        queue = mp.Queue()
+
+        p = mp.Process(
+            target=lambda q: q.put(run_single_test(code, test)),
+            args=(queue,)
+        )
+
+        p.start()
+        p.join(TIMEOUT)
+
+        if p.is_alive():
+
+            p.terminate()
+            p.join()
+
+            return False
+
+        if queue.empty():
+
+            return False
+
+        if not queue.get():
+
+            return False
+
+    return True
+
+
+# =============================
+# PASS@K
+# =============================
+
+def pass_at_k(n, c, k):
+
+    if n - c < k:
+        return 1.0
+
+    return 1 - comb(n - c, k) / comb(n, k)
+
+
+# =============================
+# MAIN
+# =============================
+
+def main():
+
+    print("Loading model...")
+
+    llm = LLM(
+        model=MODEL_PATH,
+        tensor_parallel_size=1,
+        gpu_memory_utilization=0.75,
+        max_model_len=2048,
+        enforce_eager=True,
+        enable_prefix_caching=True,
+        trust_remote_code=True
+    )
+
+    dataset = load_dataset(DATASET_PATH)
+
+    print("Dataset:", len(dataset))
+
+    prompts = []
+
+    for sample in dataset:
+
+        if "instruction" in sample:
+            problem = sample["instruction"] + "\n" + sample["input"]
+        else:
+            problem = sample["input"]
+
+        prompts.append(build_prompt(problem))
+
+    sampling_params = SamplingParams(
+        temperature=0.8,
+        top_p=0.95,
+        max_tokens=MAX_NEW_TOKENS,
+        n=K
+    )
+
+    # =============================
+    # GENERATE
+    # =============================
+
+    print("Generating solutions...")
+
+    outputs = []
+
+    for i in tqdm(range(0, len(prompts), BATCH_SIZE)):
+
+        batch = prompts[i:i+BATCH_SIZE]
+
+        result = llm.generate(batch, sampling_params)
+
+        outputs.extend(result)
+
+    # =============================
+    # BUILD TEST TASKS
+    # =============================
+
+    tasks = []
+
+    for out, sample in zip(outputs, dataset):
+
+        tests = sample["tests"]
+
+        for o in out.outputs:
+
+            code = extract_code(o.text)
+            code = clean_code(code)
+
+            tasks.append((code, tests))
+
+    # =============================
+    # RUN TESTS
+    # =============================
+
+    print("Running tests...")
+
+    results = []
+
+    with ProcessPoolExecutor(max_workers=TEST_WORKERS) as executor:
+
+        futures = []
+
+        for code, tests in tasks:
+            futures.append(executor.submit(run_tests, code, tests))
+
+        for f in tqdm(futures):
+
+            results.append(f.result())
+
+    # =============================
+    # PASS@5
+    # =============================
+
+    scores = []
+
+    idx = 0
+
+    for _ in dataset:
+
+        res = results[idx:idx+K]
+
+        c = sum(res)
+
+        scores.append(pass_at_k(K, c, K))
+
+        idx += K
+
+    score = sum(scores) / len(scores)
+
+    solved = sum(
+        any(results[i:i+K])
+        for i in range(0, len(results), K)
+    )
+
+    print("\n===== RESULT =====")
+
+    print(f"pass@5: {score:.4f}")
+
+    print(f"Solved problems: {solved}/{len(dataset)}")
+
+
+# =============================
+# ENTRY
+# =============================
+
+if __name__ == "__main__":
+
+    main()
