@@ -11,7 +11,7 @@ from collections import Counter
 # =========================
 
 MODEL_PATH = "./models/Qwen2.5-Coder-7B-Instruct"
-LORA_PATH = "./models/qwen_coder_lora_adapter_20260410_181203"
+LORA_PATH = "./models/qwen_coder_lora_adapter_fp16_20260411_021749"
 DATASET_PATH = "./data/processed/mbpp.jsonl"
 
 TIMEOUT = 3
