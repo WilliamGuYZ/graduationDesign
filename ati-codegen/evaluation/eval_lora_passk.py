@@ -1,289 +1,439 @@
-import os
+"""
+Qwen2.5-Coder-7B-Instruct + LoRA 评估脚本
+数据格式与 train.py / eval_base_passk.py 一致:
+{"question": "...", "solution": "...", "test": "...", "test_info": [...]}
+"""
+
+import gc
 import json
+import os
 import re
 import subprocess
+import sys
+import warnings
+from typing import Any, Dict, List, Optional, Tuple
+
+# =========================
+# 屏蔽 INFO 日志
+# =========================
+
+os.environ["VLLM_LOGGING_LEVEL"] = "ERROR"
+os.environ["VLLM_NO_USAGE_STATS"] = "1"
+os.environ["VLLM_LOGGING_PREFIX"] = ""
+
+import logging
+
+logging.getLogger("vllm").setLevel(logging.ERROR)
+logging.getLogger("transformers").setLevel(logging.ERROR)
+logging.getLogger("torch").setLevel(logging.ERROR)
+warnings.filterwarnings("ignore")
+
 from tqdm import tqdm
 from vllm import LLM, SamplingParams
-from collections import Counter
+from vllm.lora.request import LoRARequest
+from transformers import AutoTokenizer
 
 # =========================
 # CONFIG
 # =========================
 
-MODEL_PATH = "./models/Qwen2.5-Coder-7B-Instruct"
-LORA_PATH = "./models/qwen_coder_lora_adapter_fp16_20260411_021749"
-DATASET_PATH = "./data/processed/mbpp.jsonl"
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_PROJECT_ROOT = os.path.dirname(_HERE)
+_SCRIPTS = os.path.join(_PROJECT_ROOT, "scripts")
+LORA_POINTER_FILE = os.path.join(_PROJECT_ROOT, "train", "latest_lora_adapter.txt")
 
-TIMEOUT = 3
-MAX_TOKENS = 2048
-NUM_SAMPLES = 10 
-TEMPERATURE = 0.8 
+MODEL_PATH = os.path.join(_PROJECT_ROOT, "models", "Qwen2.5-Coder-7B-Instruct")
+DATASET_PATH = os.path.join(_PROJECT_ROOT, "data", "processed", "KodCode_eval.jsonl")
+RESULT_PATH = os.path.join(_PROJECT_ROOT, "evaluation", "results", "eval_lora_passk.txt")
+DEBUG_PATH = os.path.join(_PROJECT_ROOT, "evaluation", "results", "debug_lora_samples.json")
 
-# =========================
-# LOAD MODEL WITH LORA
-# =========================
+TIMEOUT = 5
+MAX_TOKENS = 1024
+NUM_SAMPLES = 10
+TEMPERATURE = 0.7
 
-print("Loading model with LoRA adaptor...")
-llm = LLM(
-    model=MODEL_PATH,
-    trust_remote_code=True,
-    gpu_memory_utilization=0.9,
-    max_model_len=4096,
-    enable_lora=True,  # 启用LoRA支持
-    max_lora_rank=32, 
+VLLM_MAX_MODEL_LEN = 2048
+GPU_MEMORY_UTILIZATION = 0.9
+
+DEBUG = False
+DEBUG_SAMPLE_COUNT = None
+
+_SUBPROC_SNIPPET = (
+    "import json,sys;sys.path.insert(0,sys.argv[1]);"
+    "from validate_code_with_test import test_solution_code;"
+    "d=json.load(sys.stdin);"
+    "r=test_solution_code(d['solution'],d['test'],[]);"
+    "json.dump(list(r),sys.stdout)"
 )
 
-# 创建LoRA请求（只需创建一次）
-from vllm.lora.request import LoRARequest
 
-lora_request = LoRARequest(
-    lora_name="my_adapter",  # 可以任意命名
-    lora_int_id=1,           # 唯一ID
-    lora_path=LORA_PATH      # LoRA文件路径
+def _read_lora_adapter_dir() -> str:
+    with open(LORA_POINTER_FILE, "r", encoding="utf-8") as f:
+        line = f.readline().strip()
+    return os.path.abspath(line)
+
+
+# =========================
+# BASIC HELPERS
+# =========================
+
+
+def clean_question(text: Any) -> str:
+    if not text:
+        return ""
+    text = str(text).replace("\r\n", "\n").replace("\r", "\n").strip()
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text
+
+
+def extract_code(text: str) -> str:
+    code_blocks = re.findall(r"```python(.*?)```", text, re.S)
+    if not code_blocks:
+        code_blocks = re.findall(r"```(.*?)```", text, re.S)
+    if code_blocks:
+        return code_blocks[0].strip()
+    return text.strip()
+
+
+def get_function_name_from_test_info(test_info: List[Dict]) -> str:
+    if test_info and len(test_info) > 0:
+        return test_info[0].get("function_name", "solution")
+    return "solution"
+
+
+def get_parameter_list(test_info: List[Dict]) -> str:
+    if test_info and len(test_info) > 0:
+        return test_info[0].get("parameter_list", "")
+    return ""
+
+
+# =========================
+# PROMPT（与 train.py 一致）
+# =========================
+
+SYSTEM_PROMPT = (
+    "You are an expert Python programmer. Write correct Python code to solve the given problem."
 )
 
-sampling_params = SamplingParams(
-    temperature=TEMPERATURE,
-    max_tokens=MAX_TOKENS,
-    top_p=0.95,
-    top_k=50,
-    stop=None
-)
 
-# =========================
-# PROMPT
-# =========================
+def build_instruction(question: str, func_name: str, params: str) -> str:
+    return f"""Implement the function `{func_name}` that takes {params} to solve:
 
-def build_prompt(problem, test_list=None):
-    """改进的prompt，包含测试用例"""
-    prompt = f"""Problem: {problem}
+{question}
 
-Write a Python function to solve the problem above."""
-    
-    if test_list and len(test_list) > 0:
-        prompt += f"\n\nThe function must pass this test:\n{test_list[0]}"
-    
-    prompt += "\n\nImplementation:"
-    
-    return prompt
+Only output the Python code, no explanation."""
 
-# =========================
-# CODE EXTRACTION AND FIXING
-# =========================
-def add_missing_imports(code):
-    """自动添加代码中缺失的常见imports"""
-    imports_to_add = []
-    
-    # 常见库的检测规则
-    import_rules = [
-        ('import heapq', ['heapq.']),
-        ('import re', ['re.']),
-        ('import math', ['math.']),
-        ('import random', ['random.']),
-        ('import json', ['json.']),
-        ('import itertools', ['itertools.']),
-        ('import collections', ['collections.']),
-        ('import functools', ['functools.']),
-        ('import typing', ['typing.']),
-        ('import os', ['os.']),
-        ('import sys', ['sys.']),
-        ('import copy', ['copy.']),
-        ('import time', ['time.']),
-        ('import datetime', ['datetime.']),
-        ('import hashlib', ['hashlib.']),
-        ('import base64', ['base64.']),
-        ('import csv', ['csv.']),
-        ('import string', ['string.']),
+
+def build_chat_prompt(
+    tokenizer: AutoTokenizer, question: str, func_name: str, params: str
+) -> str:
+    instruction = build_instruction(question, func_name, params)
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": instruction},
     ]
-    
-    for import_stmt, patterns in import_rules:
-        if import_stmt not in code:
-            for pattern in patterns:
-                if pattern in code:
-                    imports_to_add.append(import_stmt)
-                    break
-    
-    # 添加所有缺失的imports
-    if imports_to_add:
-        code = '\n'.join(imports_to_add) + '\n' + code
-    
-    return code
+    return tokenizer.apply_chat_template(
+        messages, tokenize=False, add_generation_prompt=True
+    )
 
-def extract_code(text):
-    """提取并修复生成的代码"""
-    code_block = re.findall(r"```python(.*?)```", text, re.S)
-    if code_block:
-        code = code_block[0]
-    else:
-        code_block = re.findall(r"```(.*?)```", text, re.S)
-        if code_block:
-            code = code_block[0]
-        else:
-            code = text
-    
-    lines = code.split('\n')
-    function_lines = []
-    in_function = False
-    
-    for line in lines:
-        if 'def ' in line and not in_function:
-            in_function = True
-            function_lines.append(line)
-        elif in_function:
-            function_lines.append(line)
-            if line.strip() and not line.startswith((' ', '\t')) and line.strip():
-                if len(function_lines) > 1:
-                    function_lines.pop()
-                    break
-    
-    if function_lines:
-        code = '\n'.join(function_lines)
-    
-    # 自动添加缺失的imports
-    code = add_missing_imports(code)
-    
-    return code.strip()
 
 # =========================
-# RUN TESTS
+# TEST EXECUTION（子进程 + 超时，与 eval_base_passk 一致）
 # =========================
 
-def run_test(code, tests):
-    """运行测试用例"""
-    if not code:
-        return False
-    
-    program = code + "\n\n"
-    for t in tests:
-        program += t + "\n"
-    
+
+def test_solution_code_with_timeout(
+    solution_code: str, test_code: str, timeout: int = 5
+) -> Tuple[bool, Optional[str]]:
+    if not solution_code or not test_code:
+        return False, "代码或测试为空"
+    payload = json.dumps({"solution": solution_code, "test": test_code}, ensure_ascii=False)
     try:
         result = subprocess.run(
-            ["python3", "-c", program],
-            capture_output=True,
+            [sys.executable, "-c", _SUBPROC_SNIPPET, _SCRIPTS],
+            input=payload,
             text=True,
-            timeout=TIMEOUT
+            capture_output=True,
+            timeout=timeout,
         )
-        return result.returncode == 0
     except subprocess.TimeoutExpired:
-        return False
-    except Exception:
-        return False
+        return False, f"执行超时 (>{timeout}秒)"
+
+    out = (result.stdout or "").strip()
+    if result.returncode == 0 and out:
+        try:
+            pair = json.loads(out)
+            return bool(pair[0]), pair[1]
+        except json.JSONDecodeError:
+            return False, f"输出解析失败: {out[:200]}"
+    err = (result.stderr or result.stdout or f"退出码 {result.returncode}")[-500:]
+    return False, err
+
+
+def execute_test_with_debug(
+    code: str, test_code: str, func_name: str, problem_idx: int = -1
+) -> Tuple[bool, Optional[str], str, str, str]:
+    if not code:
+        return False, "代码为空", "", "", ""
+    if not test_code:
+        return False, "测试代码为空", "", "", ""
+    preview = (code[:400] + "\n# --- test ---\n" + test_code[:400]).strip()
+    if len(code) + len(test_code) > 800:
+        preview = preview[:800] + "..."
+    ok, err = test_solution_code_with_timeout(code, test_code, TIMEOUT)
+    if ok:
+        return True, None, "", "", preview
+    err = err or "测试未通过"
+    return False, err, "", err, preview
+
 
 # =========================
-# LOAD DATASET
+# MAIN
 # =========================
 
-dataset = []
-with open(DATASET_PATH) as f:
-    for line in f:
-        dataset.append(json.loads(line))
 
-print(f"Dataset size: {len(dataset)}")
+def main():
+    lora_path = _read_lora_adapter_dir()
 
-# =========================
-# GENERATION WITH LORA
-# =========================
+    print("=" * 60)
+    print("加载 Tokenizer...")
+    print("=" * 60)
 
-# 为每个问题生成 NUM_SAMPLES 个独立的 prompt
-all_prompts = []
-prompt_to_problem_idx = []
+    tokenizer = AutoTokenizer.from_pretrained(
+        MODEL_PATH,
+        trust_remote_code=True,
+        use_fast=True,
+    )
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
 
-for idx, data in enumerate(dataset):
-    prompt = build_prompt(data["text"], data.get("test_list", []))
-    for _ in range(NUM_SAMPLES):
-        all_prompts.append(prompt)
-        prompt_to_problem_idx.append(idx)
+    print("\n" + "=" * 60)
+    print("加载 vLLM + LoRA...")
+    print("=" * 60)
+    print("LoRA 路径:", lora_path)
 
-print(f"Generating {len(all_prompts)} code samples ({NUM_SAMPLES} per problem) with LoRA...")
+    _llm_kwargs: Dict[str, Any] = dict(
+        model=MODEL_PATH,
+        trust_remote_code=True,
+        gpu_memory_utilization=GPU_MEMORY_UTILIZATION,
+        max_model_len=VLLM_MAX_MODEL_LEN,
+        enable_lora=True,
+        max_lora_rank=32,
+    )
+    _tok_cfg = os.path.join(lora_path, "tokenizer_config.json")
+    _tok_json = os.path.join(lora_path, "tokenizer.json")
+    if os.path.isdir(lora_path) and (
+        os.path.isfile(_tok_cfg) or os.path.isfile(_tok_json)
+    ):
+        _llm_kwargs["tokenizer"] = lora_path
 
-# 使用LoRA进行生成（只需添加lora_request参数）
-outputs = llm.generate(
-    all_prompts, 
-    sampling_params,
-    lora_request=lora_request  # 使用你的LoRA适配器
-)
+    llm = LLM(**_llm_kwargs)
 
-# =========================
-# EVALUATION
-# =========================
+    lora_request = LoRARequest(
+        lora_name="eval_adapter",
+        lora_int_id=1,
+        lora_path=lora_path,
+    )
 
-# 存储每个问题的结果
-problem_results = [[] for _ in range(len(dataset))]
+    sampling_params = SamplingParams(
+        temperature=TEMPERATURE,
+        max_tokens=MAX_TOKENS,
+        top_p=0.95,
+        top_k=50,
+        stop=None,
+    )
 
-for idx, (data_idx, output) in enumerate(tqdm(zip(prompt_to_problem_idx, outputs), total=len(all_prompts))):
-    generated = output.outputs[0].text
-    code = extract_code(generated)
-    
-    if not code or '# Your code here' in code:
-        passed = False
-    else:
-        passed = run_test(code, dataset[data_idx]["test_list"])
-    
-    problem_results[data_idx].append(passed)
+    print("\n" + "=" * 60)
+    print("加载数据集...")
+    print("=" * 60)
 
-# =========================
-# CALCULATE PASS@1, PASS@5, PASS@10
-# =========================
+    dataset: List[Dict[str, Any]] = []
+    if not os.path.isfile(DATASET_PATH):
+        raise FileNotFoundError(f"未找到数据文件: {DATASET_PATH}")
 
-total_correct_pass1 = 0
-total_correct_pass5 = 0
-total_correct_pass10 = 0
+    with open(DATASET_PATH, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            row = json.loads(line)
+            question = clean_question(row.get("question"))
+            test_code = row.get("test", "")
+            test_info = row.get("test_info", [])
+            solution = row.get("solution", "")
 
-# 存储每个问题的详细统计
-problem_stats = []
+            if not question or not test_code:
+                continue
+            dataset.append(
+                {
+                    "question": question,
+                    "test_code": test_code,
+                    "solution": solution,
+                    "func_name": get_function_name_from_test_info(test_info),
+                    "params": get_parameter_list(test_info),
+                }
+            )
 
-for samples in problem_results:
-    # pass@1: 第一个样本通过
-    pass1_correct = samples[0] if samples else False
-    
-    # pass@5: 前5个样本中至少有一个通过
-    pass5_correct = any(samples[:5]) if len(samples) >= 5 else any(samples)
-    
-    # pass@10: 所有样本中至少有一个通过
-    pass10_correct = any(samples)
-    
-    # 统计正确数量
-    num_correct = sum(samples)
-    
-    if pass1_correct:
-        total_correct_pass1 += 1
-    if pass5_correct:
-        total_correct_pass5 += 1
-    if pass10_correct:
-        total_correct_pass10 += 1
-    
-    problem_stats.append({
-        "num_correct": num_correct,
-        "pass1": pass1_correct,
-        "pass5": pass5_correct,
-        "pass10": pass10_correct,
-        "samples": samples
-    })
+    print(f"原始数据集大小: {len(dataset)} 条")
 
-total_problems = len(dataset)
-pass1 = total_correct_pass1 / total_problems if total_problems > 0 else 0
-pass5 = total_correct_pass5 / total_problems if total_problems > 0 else 0
-pass10 = total_correct_pass10 / total_problems if total_problems > 0 else 0
+    if DEBUG and DEBUG_SAMPLE_COUNT is not None:
+        dataset = dataset[:DEBUG_SAMPLE_COUNT]
+        print(f"调试模式: 只测试前 {len(dataset)} 条")
 
-# =========================
-# PRINT RESULTS
-# =========================
+    print("\n" + "=" * 60)
+    print("验证原始 solution 代码...")
+    print("=" * 60)
 
-print("\n" + "=" * 60)
-print("MBPP PASS@K EVALUATION RESULTS (WITH LoRA)")
-print("=" * 60)
-print(f"Total problems:        {total_problems}")
-print(f"Samples per problem:   {NUM_SAMPLES}")
-print(f"Temperature:           {TEMPERATURE}")
-print(f"LoRA Path:             {LORA_PATH}")
-print("-" * 60)
-print(f"PASS@1:                {pass1:.4f} ({pass1*100:.2f}%)")
-print(f"  Correct:             {total_correct_pass1}/{total_problems}")
-print("-" * 60)
-print(f"PASS@5:                {pass5:.4f} ({pass5*100:.2f}%)")
-print(f"  Correct:             {total_correct_pass5}/{total_problems}")
-print("-" * 60)
-print(f"PASS@10:               {pass10:.4f} ({pass10*100:.2f}%)")
-print(f"  Correct:             {total_correct_pass10}/{total_problems}")
-print("=" * 60)
+    solution_pass_count = 0
+    solution_fail_details: List[Dict[str, Any]] = []
+
+    for idx, data in enumerate(dataset):
+        passed, error, _stdout, _stderr, program_preview = execute_test_with_debug(
+            data["solution"], data["test_code"], data["func_name"], idx
+        )
+        if passed:
+            solution_pass_count += 1
+        else:
+            solution_fail_details.append(
+                {
+                    "index": idx,
+                    "func_name": data["func_name"],
+                    "error": error,
+                    "preview": program_preview[:200] if program_preview else "",
+                }
+            )
+
+    n_ds = len(dataset)
+    pct = (solution_pass_count / n_ds * 100) if n_ds else 0.0
+    print(f"\n原始 solution 通过率: {solution_pass_count}/{n_ds} ({pct:.1f}%)")
+
+    print("\n" + "=" * 60)
+    print("构建 Prompts...")
+    print("=" * 60)
+
+    all_prompts: List[str] = []
+    prompt_to_problem_idx: List[int] = []
+
+    for idx, data in enumerate(dataset):
+        prompt = build_chat_prompt(
+            tokenizer, data["question"], data["func_name"], data["params"]
+        )
+        for _ in range(NUM_SAMPLES):
+            all_prompts.append(prompt)
+            prompt_to_problem_idx.append(idx)
+
+    print(f"总生成请求: {len(all_prompts)} 个")
+
+    print("\n" + "=" * 60)
+    print("开始生成（LoRA）...")
+    print("=" * 60)
+
+    outputs = llm.generate(
+        all_prompts,
+        sampling_params,
+        lora_request=lora_request,
+    )
+
+    print("\n" + "=" * 60)
+    print("评估中...")
+    print("=" * 60)
+
+    problem_results: List[List[bool]] = [[] for _ in range(len(dataset))]
+    debug_samples: List[Dict[str, Any]] = []
+    timeout_count = 0
+
+    for data_idx, output in tqdm(
+        zip(prompt_to_problem_idx, outputs), total=len(all_prompts)
+    ):
+        generated = output.outputs[0].text
+        code = extract_code(generated)
+
+        passed, error, _o, _e, _p = execute_test_with_debug(
+            code,
+            dataset[data_idx]["test_code"],
+            dataset[data_idx]["func_name"],
+            data_idx,
+        )
+        if error and "超时" in str(error):
+            timeout_count += 1
+
+        problem_results[data_idx].append(passed)
+
+        if DEBUG and len([s for s in debug_samples if s["index"] == data_idx]) == 0:
+            debug_samples.append(
+                {
+                    "index": data_idx,
+                    "func_name": dataset[data_idx]["func_name"],
+                    "question_preview": dataset[data_idx]["question"][:300],
+                    "generated_code_preview": code[:500] if code else "空",
+                    "passed": passed,
+                    "error": error,
+                }
+            )
+
+    if DEBUG:
+        os.makedirs(os.path.dirname(DEBUG_PATH), exist_ok=True)
+        with open(DEBUG_PATH, "w", encoding="utf-8") as f:
+            json.dump(debug_samples, f, indent=2, ensure_ascii=False)
+        print(f"\n调试信息已保存至: {DEBUG_PATH}")
+
+    if timeout_count > 0:
+        print(
+            f"\n⚠️ 超时统计: {timeout_count}/{len(all_prompts)} 次 "
+            f"({timeout_count/len(all_prompts)*100:.1f}%)"
+        )
+
+    total_correct_pass1 = sum(
+        1 for samples in problem_results if samples and samples[0]
+    )
+    total_correct_pass5 = sum(
+        1 for samples in problem_results if len(samples) >= 5 and any(samples[:5])
+    )
+    total_correct_pass10 = sum(1 for samples in problem_results if any(samples))
+
+    total_problems = len(dataset)
+    pass1 = total_correct_pass1 / total_problems if total_problems > 0 else 0
+    pass5 = total_correct_pass5 / total_problems if total_problems > 0 else 0
+    pass10 = total_correct_pass10 / total_problems if total_problems > 0 else 0
+
+    print("\n" + "=" * 60)
+    print("PASS@K 评估结果（LoRA）")
+    print("=" * 60)
+    print(f"总问题数:            {total_problems}")
+    print(f"每问题样本数:        {NUM_SAMPLES}")
+    print(f"温度参数:            {TEMPERATURE}")
+    print(f"测试超时:            {TIMEOUT} 秒")
+    print(f"LoRA 路径:           {lora_path}")
+    print("-" * 60)
+    print(f"PASS@1:              {pass1:.4f} ({pass1 * 100:.2f}%)")
+    print(f"  正确数:            {total_correct_pass1}/{total_problems}")
+    print("-" * 60)
+    print(f"PASS@5:              {pass5:.4f} ({pass5 * 100:.2f}%)")
+    print(f"  正确数:            {total_correct_pass5}/{total_problems}")
+    print("-" * 60)
+    print(f"PASS@10:             {pass10:.4f} ({pass10 * 100:.2f}%)")
+    print(f"  正确数:            {total_correct_pass10}/{total_problems}")
+    print("=" * 60)
+
+    os.makedirs(os.path.dirname(RESULT_PATH), exist_ok=True)
+    with open(RESULT_PATH, "w", encoding="utf-8") as f:
+        f.write(f"总问题数:            {total_problems}\n")
+        f.write(f"每问题样本数:        {NUM_SAMPLES}\n")
+        f.write(f"温度参数:            {TEMPERATURE}\n")
+        f.write(f"测试超时:            {TIMEOUT} 秒\n")
+        f.write(f"LoRA 路径:           {lora_path}\n")
+        f.write(f"PASS@1:              {pass1:.4f} ({pass1 * 100:.2f}%)\n")
+        f.write(f"  正确数:            {total_correct_pass1}/{total_problems}\n")
+        f.write(f"PASS@5:              {pass5:.4f} ({pass5 * 100:.2f}%)\n")
+        f.write(f"  正确数:            {total_correct_pass5}/{total_problems}\n")
+        f.write(f"PASS@10:             {pass10:.4f} ({pass10 * 100:.2f}%)\n")
+        f.write(f"  正确数:            {total_correct_pass10}/{total_problems}\n")
+
+    print(f"\n结果已保存至: {RESULT_PATH}")
+
+    del llm
+    gc.collect()
+
+
+if __name__ == "__main__":
+    main()

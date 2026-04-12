@@ -1,367 +1,322 @@
+"""
+Qwen2.5-Coder-7B-Instruct LoRA 微调脚本
+数据格式: {"question": "...", "solution": "...", "test": "...", "test_info": [{"function_declaration": "...", "function_name": "...", "parameter_list": "..."}]}
+所有字段均已确认不为空
+"""
+
 import os
 import json
 import time
-import torch
-import warnings
-from functools import partial
+from datetime import datetime
 
-from datetime import datetime, timedelta
-from datasets import load_dataset
+import torch
+from datasets import Dataset
 from transformers import (
     AutoTokenizer,
     AutoModelForCausalLM,
     TrainingArguments,
     Trainer,
-    BitsAndBytesConfig,
     DataCollatorForSeq2Seq,
-    EarlyStoppingCallback,
 )
-from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
+from peft import LoraConfig, get_peft_model
 
-warnings.filterwarnings("ignore")
 
-# ================= 路径配置 =================
+# ==================== 配置 ====================
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-MODEL_PATH = "models/Qwen2.5-Coder-7B-Instruct"
-DATA_PATH = os.path.join(PROJECT_ROOT, "data", "processed", "train_code.jsonl")
-OUTPUT_ROOT = os.path.join(PROJECT_ROOT, "train")
+MODEL_PATH = os.path.join(PROJECT_ROOT, "models", "Qwen2.5-Coder-7B-Instruct")
+DATA_PATH = os.path.join(PROJECT_ROOT, "data", "processed", "KodCode_train.jsonl")
+LATEST_LORA_POINTER = os.path.join(PROJECT_ROOT, "train", "latest_lora_adapter.txt")
+OUTPUT_ROOT = os.path.join(PROJECT_ROOT, "train", "outputs")
 
-# ================= 工具函数 =================
+# 序列长度（已确认数据不超过 1024）
+MAX_LENGTH = 1024
 
-def create_timestamp_dir(base_dir, prefix):
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    path = os.path.join(base_dir, f"{prefix}_{timestamp}")
-    os.makedirs(path, exist_ok=True)
-    return path, timestamp
+# LoRA 配置
+LORA_R = 32
+LORA_ALPHA = 64
+LORA_DROPOUT = 0.1
+LORA_TARGET_MODULES = [
+    "q_proj", "k_proj", "v_proj", "o_proj",
+    "gate_proj", "up_proj", "down_proj",
+]
 
-def save_json(path, data):
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
+# 训练配置
+BATCH_SIZE = 4
+GRADIENT_ACCUMULATION = 8
+LEARNING_RATE = 2e-5
+NUM_EPOCHS = 3
+WARMUP_RATIO = 0.03
+WEIGHT_DECAY = 0.01
+SAVE_STEPS = 500
+EVAL_STEPS = 500
+LOGGING_STEPS = 50
 
-def build_training_text(example, tokenizer):
+SEED = 42
+# =============================================
+
+
+def load_jsonl(path):
+    """加载 JSONL 数据"""
+    data = []
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            if line.strip():
+                data.append(json.loads(line))
+    print(f"加载了 {len(data)} 条数据")
+    return data
+
+
+def build_instruction(example):
     """
-    使用与评估完全一致的纯文本格式（不使用chat template）
-    这样可以避免训练和评估时的格式不匹配问题
+    构建 instruction
+    模板: "Implement the function `{function_name}` that takes {parameter_list} to solve:\n\n{question}\n\nOnly output the Python code, no explanation."
     """
-    instruction = example.get("instruction", "")
-    input_text = example.get("input", "")
-    code = example.get("output", "")
+    question = example["question"].strip()
+    func_name = example["test_info"][0]["function_name"]
+    params = example["test_info"][0]["parameter_list"]
+    
+    return f"""Implement the function `{func_name}` that takes {params} to solve:
 
-    # 构建问题（与评估保持一致）
-    if input_text:
-        problem = instruction + "\n" + input_text
+{question}
+
+Only output the Python code, no explanation."""
+
+
+def build_messages(example):
+    """构建 Qwen ChatML 格式"""
+    instruction = build_instruction(example)
+    code = example["solution"].strip()
+    
+    messages = [
+        {"role": "system", "content": "You are an expert Python programmer. Write correct Python code to solve the given problem."},
+        {"role": "user", "content": instruction},
+        {"role": "assistant", "content": code}
+    ]
+    
+    return {"messages": messages}
+
+
+def tokenize_function(examples, tokenizer):
+    """
+    Tokenize 并设置 labels：仅对 assistant 回复段计算 loss。
+    Qwen2.5 等模板不含 `{% generation %}`，不能使用 return_assistant_tokens_mask；
+    通过「除最后一条 assistant 外的对话 + add_generation_prompt=True」得到前缀 token 边界。
+    """
+    messages = examples["messages"]
+    if not messages or messages[-1].get("role") != "assistant":
+        raise ValueError("messages 须以 assistant 结尾")
+
+    prefix_ids = tokenizer.apply_chat_template(
+        messages[:-1],
+        tokenize=True,
+        add_generation_prompt=True,
+        truncation=True,
+        max_length=MAX_LENGTH,
+    )
+    full_ids = tokenizer.apply_chat_template(
+        messages,
+        tokenize=True,
+        add_generation_prompt=False,
+        truncation=True,
+        max_length=MAX_LENGTH,
+    )
+
+    # 前缀与完整序列的公共前缀长度即 assistant 起点（两侧截断策略一致时与 len(prefix_ids) 一致）
+    i = 0
+    lim = min(len(prefix_ids), len(full_ids))
+    while i < lim and prefix_ids[i] == full_ids[i]:
+        i += 1
+    assistant_start = i
+    if assistant_start >= len(full_ids):
+        labels = list(full_ids)
     else:
-        problem = instruction
+        labels = [-100] * assistant_start + full_ids[assistant_start:]
 
-    # 使用与评估完全相同的prompt格式
-    prompt = f"""Problem: {problem}
-
-Write a Python function to solve the problem above.
-
-Implementation:"""
-    
-    # 完整文本 = prompt + 代码（确保代码前有换行）
-    full = prompt + "\n" + code
-    
     return {
-        "text": full,
-        "prompt": prompt,
-        "response": code,
+        "input_ids": full_ids,
+        "attention_mask": [1] * len(full_ids),
+        "labels": labels,
     }
 
-def tokenize_with_mask(example, tokenizer, max_len):
-    """
-    改进版tokenization：正确处理截断和对齐
-    """
-    prompt = example["prompt"]
-    full_text = example["text"]
-    
-    # 先tokenize完整文本，启用截断
-    tokenized = tokenizer(
-        full_text,
-        truncation=True,
-        max_length=max_len,
-        padding=False,
-        return_overflowing_tokens=False,
-    )
-    
-    # tokenize prompt（同样截断，确保长度一致）
-    prompt_tokenized = tokenizer(
-        prompt,
-        truncation=True,
-        max_length=max_len,
-        padding=False,
-    )
-    
-    labels = tokenized["input_ids"].copy()
-    prompt_len = len(prompt_tokenized["input_ids"])
-    
-    # 安全处理：如果prompt比完整文本还长，全部mask
-    if prompt_len >= len(labels):
-        labels = [-100] * len(labels)
-    else:
-        # 只对prompt部分设置-100（不计算损失）
-        labels[:prompt_len] = [-100] * prompt_len
-    
-    tokenized["labels"] = labels
-    return tokenized
 
-def print_training_example(dataset, tokenizer, num_examples=2):
-    """打印训练样本示例，用于调试"""
-    print("\n>>> 训练数据示例:")
-    for i in range(min(num_examples, len(dataset))):
-        example = dataset[i]
-        print(f"\n--- 示例 {i+1} ---")
-        print(f"Prompt (前200字符): {example['prompt'][:200]}...")
-        print(f"Response (前100字符): {example['response'][:100]}...")
-        print(f"完整文本长度: {len(example['text'])} 字符")
-        
-        # 检查tokenization结果
-        tokenized = tokenize_with_mask(example, tokenizer, 2048)
-        print(f"Tokenized长度: {len(tokenized['input_ids'])}")
-        print(f"Labels中-100的数量: {tokenized['labels'].count(-100)}")
-        print(f"实际训练token数: {len([l for l in tokenized['labels'] if l != -100])}")
+def save_latest_adapter_path(adapter_path):
+    """保存最新适配器路径到文件"""
+    # 确保目录存在
+    os.makedirs(os.path.dirname(LATEST_LORA_POINTER), exist_ok=True)
+    
+    with open(LATEST_LORA_POINTER, "w", encoding="utf-8") as f:
+        f.write(adapter_path + "\n")
+    
+    print(f"已保存最新适配器路径: {LATEST_LORA_POINTER}")
+    print(f"路径内容: {adapter_path}")
 
-# ================= 主函数 =================
 
 def main():
-    os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
-    torch.cuda.empty_cache()
+    # 创建输出目录
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_dir = os.path.join(OUTPUT_ROOT, f"qwen_lora_{timestamp}")
+    os.makedirs(output_dir, exist_ok=True)
     
-    start_time = time.time()
-    start_datetime = datetime.now()
+    # 1. 加载数据
+    print("\n[1/5] 加载数据...")
+    raw_data = load_jsonl(DATA_PATH)
     
-    train_dir, timestamp = create_timestamp_dir(OUTPUT_ROOT, "qwen_coder_lora_train")
-    print("训练目录:", train_dir)
+    # 2. 构建消息
+    print("[2/5] 构建对话格式...")
+    formatted_data = [build_messages(item) for item in raw_data]
+    dataset = Dataset.from_list(formatted_data)
     
-    # ===== Tokenizer =====
-    print(">>> 加载 tokenizer")
+    # 3. 划分数据集
+    print("[3/5] 划分训练/验证集...")
+    split = dataset.train_test_split(test_size=0.05, seed=SEED)
+    train_dataset = split["train"]
+    eval_dataset = split["test"]
+    print(f"训练集: {len(train_dataset)} 条")
+    print(f"验证集: {len(eval_dataset)} 条")
+    
+    # 4. 加载模型和分词器
+    print("[4/5] 加载模型...")
     tokenizer = AutoTokenizer.from_pretrained(
         MODEL_PATH,
         trust_remote_code=True,
         padding_side="right",
-        use_fast=True,
     )
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
     
-    # ===== 模型加载（添加4-bit量化以提高稳定性）=====
-    print(">>> 加载模型 (4-bit量化 + LoRA)")
-    
-    # 配置4-bit量化
-    bnb_config = BitsAndBytesConfig(
-        load_in_4bit=True,
-        bnb_4bit_quant_type="nf4",
-        bnb_4bit_compute_dtype=torch.float16,
-        bnb_4bit_use_double_quant=True,
-    )
-    
     model = AutoModelForCausalLM.from_pretrained(
         MODEL_PATH,
-        quantization_config=bnb_config,
-        trust_remote_code=True,
-        use_cache=False,
+        dtype=torch.bfloat16,
         device_map="auto",
+        trust_remote_code=True,
     )
-    
-    # 准备模型进行k-bit训练
-    model = prepare_model_for_kbit_training(model)
+    # 梯度检查点与推理 KV cache 互斥；显式关闭可避免反复打印「Setting use_cache=False」
+    model.config.use_cache = False
     model.gradient_checkpointing_enable()
     
-    # ===== LoRA配置（优化后的参数）=====
+    # 5. 配置 LoRA
+    print("配置 LoRA...")
     lora_config = LoraConfig(
-        r=16,                      # 降低rank减少过拟合
-        lora_alpha=32,             # alpha = 2 * r
-        target_modules=[
-            "q_proj", "k_proj", "v_proj", "o_proj",
-            "gate_proj", "up_proj", "down_proj",
-        ],
-        lora_dropout=0.1,          # 增加dropout提高泛化
+        r=LORA_R,
+        lora_alpha=LORA_ALPHA,
+        target_modules=LORA_TARGET_MODULES,
+        lora_dropout=LORA_DROPOUT,
         bias="none",
         task_type="CAUSAL_LM",
     )
-    
     model = get_peft_model(model, lora_config)
+    inner = getattr(getattr(model, "base_model", None), "model", None)
+    if inner is not None and hasattr(inner, "config"):
+        inner.config.use_cache = False
     model.print_trainable_parameters()
     
-    # ===== 数据加载和划分 =====
-    print(">>> 加载数据")
-    dataset = load_dataset("json", data_files=DATA_PATH)["train"]
-    print(f"原始数据: {len(dataset)} 条")
+    # 6. Tokenize
+    print("[5/5] Tokenizing...")
+    tokenize_with_config = lambda x: tokenize_function(x, tokenizer)
     
-    # 构建训练文本
-    dataset = dataset.map(
-        partial(build_training_text, tokenizer=tokenizer),
+    train_dataset = train_dataset.map(
+        tokenize_with_config,
+        remove_columns=train_dataset.column_names,
+        num_proc=4,
+    )
+    eval_dataset = eval_dataset.map(
+        tokenize_with_config,
+        remove_columns=eval_dataset.column_names,
         num_proc=4,
     )
     
-    # 打印训练示例（调试用）
-    print_training_example(dataset, tokenizer)
+    # 打印示例信息
+    print(f"\n示例序列长度: {len(train_dataset[0]['input_ids'])}")
+    train_ratio = 1 - train_dataset[0]['labels'].count(-100) / len(train_dataset[0]['labels'])
+    print(f"训练 token 比例: {train_ratio:.1%}")
     
-    MAX_SEQ_LENGTH = 2048
-    
-    # Tokenize
-    dataset = dataset.map(
-        lambda x: tokenize_with_mask(x, tokenizer, MAX_SEQ_LENGTH),
-        remove_columns=dataset.column_names,
-        num_proc=4
-    )
-    
-    # 过滤掉过短的样本（可选）
-    dataset = dataset.filter(lambda x: len(x["input_ids"]) > 10)
-    
-    print(f"总样本: {len(dataset)} 条")
-    
-    # 检查序列长度分布
-    lengths = [len(x["input_ids"]) for x in dataset.select(range(min(500, len(dataset))))]
-    print(f"序列长度统计: 平均={sum(lengths)/len(lengths):.1f}, "
-          f"最大={max(lengths)}, 最小={min(lengths)}, "
-          f"P95={sorted(lengths)[int(len(lengths)*0.95)]}")
-    
-    # ===== 划分训练集和验证集 =====
-    print("\n>>> 划分训练集和验证集")
-    if len(dataset) < 200:
-        train_test_split = dataset.train_test_split(test_size=0.2, seed=42)
-    else:
-        train_test_split = dataset.train_test_split(test_size=0.1, seed=42)
-    
-    train_dataset = train_test_split["train"]
-    eval_dataset = train_test_split["test"]
-    
-    print(f"训练样本: {len(train_dataset)} 条")
-    print(f"验证样本: {len(eval_dataset)} 条")
-    
-    # ===== 优化后的训练参数 =====
-    batch_size = 4                  # 增加到4（量化后显存更充裕）
-    grad_acc = 4                    # 降低到4，有效batch=16
-    epochs = 3
-
+    # 7. 训练参数
     training_args = TrainingArguments(
-        output_dir=train_dir,
-        per_device_train_batch_size=batch_size,
-        per_device_eval_batch_size=batch_size,
-        gradient_accumulation_steps=grad_acc,
-        num_train_epochs=epochs,
-        learning_rate=5e-5,         # 降低学习率（从2e-4降到5e-5）
-        lr_scheduler_type="cosine",
-        warmup_ratio=0.15,          # 增加warmup
-        bf16=False,
-        fp16=True,
-        optim="adamw_8bit",
-        weight_decay=0.05,          # 增加权重衰减
-        logging_steps=10,
-        save_steps=100,
+        output_dir=output_dir,
+        per_device_train_batch_size=BATCH_SIZE,
+        per_device_eval_batch_size=BATCH_SIZE,
+        gradient_accumulation_steps=GRADIENT_ACCUMULATION,
+        learning_rate=LEARNING_RATE,
+        num_train_epochs=NUM_EPOCHS,
+        warmup_ratio=WARMUP_RATIO,
+        weight_decay=WEIGHT_DECAY,
+        logging_steps=LOGGING_STEPS,
+        save_steps=SAVE_STEPS,
+        eval_steps=EVAL_STEPS,
         save_total_limit=2,
-        # 验证相关参数
         eval_strategy="steps",
-        eval_steps=50,
         save_strategy="steps",
         load_best_model_at_end=True,
         metric_for_best_model="eval_loss",
         greater_is_better=False,
-        # 其他参数
-        report_to="none",
-        dataloader_num_workers=4,
+        bf16=True,
         gradient_checkpointing=True,
-        tf32=False,
-        remove_unused_columns=True,
-        # 添加训练稳定性参数
-        max_grad_norm=1.0,          # 梯度裁剪
-    )
-
-    data_collator = DataCollatorForSeq2Seq(
-        tokenizer=tokenizer,
-        pad_to_multiple_of=8,
-        label_pad_token_id=-100,
-        return_tensors="pt",
+        report_to="tensorboard",
+        logging_dir=f"{output_dir}/logs",
+        seed=SEED,
+        dataloader_num_workers=4,
     )
     
-    # ===== 创建 Trainer =====
     trainer = Trainer(
         model=model,
         args=training_args,
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
-        data_collator=data_collator,
-        callbacks=[EarlyStoppingCallback(early_stopping_patience=3)],
+        data_collator=DataCollatorForSeq2Seq(
+            tokenizer=tokenizer,
+            pad_to_multiple_of=8,
+            label_pad_token_id=-100,
+        ),
     )
     
-    print(f"\n>>> 开始训练")
-    print(f"有效 batch size: {batch_size * grad_acc}")
-    print(f"学习率: {training_args.learning_rate}")
-    print(f"LoRA rank: {lora_config.r}")
-    print(f"LoRA alpha: {lora_config.lora_alpha}")
-    print(f"LoRA dropout: {lora_config.lora_dropout}")
-    print(f"权重衰减: {training_args.weight_decay}")
-    print(f"最大序列长度: {MAX_SEQ_LENGTH}")
-    print(f"早停耐心值: 3 次评估")
-    print(f"梯度裁剪: {training_args.max_grad_norm}")
-    
-    # 开始训练
+    # 8. 训练
+    print("\n开始训练...")
+    start_time = time.time()
     trainer.train()
+    train_time = time.time() - start_time
     
-    # ===== 保存最佳模型 =====
-    adapter_dir, _ = create_timestamp_dir(
-        os.path.join(PROJECT_ROOT, "models"),
-        "qwen_coder_lora_adapter",
-    )
-    model.save_pretrained(adapter_dir)
-    tokenizer.save_pretrained(adapter_dir)
-    print("LoRA 保存:", adapter_dir)
+    # 9. 保存模型
+    adapter_path = os.path.join(output_dir, "lora_adapter")
+    model.save_pretrained(adapter_path)
+    tokenizer.save_pretrained(adapter_path)
+    print(f"\nLoRA 适配器保存至: {adapter_path}")
     
-    # 同时保存一份配置信息供评估使用
-    config_info = {
-        "prompt_format": "plain_text",  # 标记使用的格式
-        "prompt_template": """Problem: {problem}
-
-Write a Python function to solve the problem above.
-
-Implementation:""",
-        "notes": "训练和评估使用相同的纯文本格式"
-    }
-    save_json(os.path.join(adapter_dir, "training_config.json"), config_info)
+    # 10. 保存 latest_lora_adapter.txt
+    save_latest_adapter_path(adapter_path)
     
-    # ===== 日志 =====
-    total_time = time.time() - start_time
-    
-    best_metrics = {}
-    if trainer.state.best_metric is not None:
-        best_metrics = {
-            "best_metric": trainer.state.best_metric,
-            "best_model_checkpoint": trainer.state.best_model_checkpoint,
-        }
-    
-    summary = {
-        "start_time": start_datetime.strftime("%Y-%m-%d %H:%M:%S"),
-        "end_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    # 11. 保存配置
+    config = {
+        "model_path": MODEL_PATH,
+        "data_path": DATA_PATH,
+        "max_length": MAX_LENGTH,
+        "lora_r": LORA_R,
+        "lora_alpha": LORA_ALPHA,
+        "lora_dropout": LORA_DROPOUT,
+        "batch_size": BATCH_SIZE,
+        "gradient_accumulation": GRADIENT_ACCUMULATION,
+        "learning_rate": LEARNING_RATE,
+        "num_epochs": NUM_EPOCHS,
+        "warmup_ratio": WARMUP_RATIO,
+        "weight_decay": WEIGHT_DECAY,
         "train_samples": len(train_dataset),
         "eval_samples": len(eval_dataset),
-        "total_samples": len(dataset),
-        "total_time": str(timedelta(seconds=int(total_time))),
-        "adapter_dir": adapter_dir,
-        "best_metrics": best_metrics,
-        "config": {
-            "lora_r": lora_config.r,
-            "lora_alpha": lora_config.lora_alpha,
-            "lora_dropout": lora_config.lora_dropout,
-            "max_seq_length": MAX_SEQ_LENGTH,
-            "batch_size": batch_size,
-            "grad_accum": grad_acc,
-            "learning_rate": training_args.learning_rate,
-            "weight_decay": training_args.weight_decay,
-            "epochs": epochs,
-            "early_stopping_patience": 3,
-            "quantization": "4bit",
-            "prompt_format": "plain_text",
-        }
+        "train_time_seconds": train_time,
+        "timestamp": timestamp,
     }
-    save_json(os.path.join(train_dir, "training_log.json"), summary)
+    with open(os.path.join(output_dir, "config.json"), "w") as f:
+        json.dump(config, f, indent=2)
     
-    print(f"\n训练完成，总时间: {summary['total_time']}")
-    if best_metrics:
-        print(f"最佳验证损失: {best_metrics['best_metric']:.4f}")
-    
+    # 12. 打印总结
+    print("\n" + "="*60)
+    print("训练完成！")
+    print("="*60)
+    print(f"训练耗时: {train_time/60:.2f} 分钟")
+    print(f"输出目录: {output_dir}")
+    print(f"LoRA 适配器: {adapter_path}")
+    print(f"最新适配器指针: {LATEST_LORA_POINTER}")
+    print("="*60)
+
 
 if __name__ == "__main__":
     main()

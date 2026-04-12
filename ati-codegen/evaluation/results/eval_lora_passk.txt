@@ -1,0 +1,11 @@
+总问题数:            1000
+每问题样本数:        10
+温度参数:            0.7
+测试超时:            5 秒
+LoRA 路径:           /home/ubuntu/yejunyin/graduationDesign/ati-codegen/train/outputs/qwen_lora_20260413_051903/lora_adapter
+PASS@1:              0.6880 (68.80%)
+  正确数:            688/1000
+PASS@5:              0.8510 (85.10%)
+  正确数:            851/1000
+PASS@10:             0.8890 (88.90%)
+  正确数:            889/1000
