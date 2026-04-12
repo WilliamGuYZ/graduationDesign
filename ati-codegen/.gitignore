@@ -1,10 +1,33 @@
-# --- 本地模型权重（体积大，勿提交） ---
+# --- 不提交：本地基座模型权重（体积过大） ---
 models/Qwen2.5-Coder-7B-Instruct/
 
-# --- Python 缓存与虚拟环境 ---
+# --- Python / 虚拟环境与缓存 ---
 .venv/
+venv/
+env/
+.env
 __pycache__/
 *.py[cod]
+*$py.class
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+.eggs/
+dist/
+build/
+pip-wheel-metadata/
 
-# --- 训练输出与日志（大文件，勿提交） ---
+# --- Jupyter / 工具 ---
+.ipynb_checkpoints/
+
+# --- 编辑器与系统杂项 ---
+.idea/
+.vscode/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+
+# --- Cursor 本地状态（含 debug 日志等） ---
+.cursor/
