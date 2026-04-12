@@ -1,7 +1,0 @@
-{
-  "correct": 0,
-  "total": 974,
-  "pass1": 0.0,
-  "model_path": "/root/graduationDesign/ati-codegen/models/Qwen2.5-Coder-7B-Instruct",
-  "device": "cuda"
-}
