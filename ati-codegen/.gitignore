@@ -1,6 +1,12 @@
 # --- 不提交：本地基座模型权重（体积过大） ---
 models/Qwen2.5-Coder-7B-Instruct/
 
+# LoRA 训练产物（adapter 等常 >100MB，GitHub 会拒绝；仅本地保留）
+train/outputs/
+
+# Parquet 源数据常 >100MB；可用 JSONL + 脚本代替入库
+data/raw/*.parquet
+
 # --- Python / 虚拟环境与缓存 ---
 .venv/
 venv/
