@@ -8,4 +8,3 @@ __pycache__/
 .pytest_cache/
 
 # --- 训练输出与日志（大文件，勿提交） ---
-train/outputs/
