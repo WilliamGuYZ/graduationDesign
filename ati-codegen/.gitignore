@@ -1,5 +1,6 @@
 # --- 不提交：本地基座模型权重（体积过大） ---
 models/Qwen2.5-Coder-7B-Instruct/
+train/outputs/
 
 # 说明：*.parquet / *.safetensors 等大文件由 Git LFS 管理（见仓库根 .gitattributes），
 # 不要从 Git 里提交「整段基座模型」等非 LFS 巨型单文件。
