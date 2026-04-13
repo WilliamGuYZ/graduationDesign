@@ -1,0 +1,35 @@
+[
+  {
+    "index": 0,
+    "func_name": "max_product",
+    "question_preview": "Given a list of integers `nums`, find the maximum product of any two distinct elements in the list. Return the maximum product. For example, given `nums = [5, 3, -1, 9, -7]`, the maximum product would be `5 * 9 = 45`.",
+    "generated_code_preview": "def max_product(nums):\n    nums.sort()\n    return nums[-1] * nums[-2]",
+    "generated_code_full": "def max_product(nums):\n    nums.sort()\n    return nums[-1] * nums[-2]",
+    "passed": false,
+    "error": "1 test(s) failed: test_max_product_with_negatives: AssertionError",
+    "stdout": "",
+    "stderr": "1 test(s) failed: test_max_product_with_negatives: AssertionError"
+  },
+  {
+    "index": 1,
+    "func_name": "min_subarray_len",
+    "question_preview": "Given a list of integers `nums`, consider a list of all possible subarrays. Return the length of the shortest subarray whose sum is equal to or greater than a given integer `target`. If no such subarray exists, return 0.",
+    "generated_code_preview": "def min_subarray_len(target, nums):\n    min_len = float('inf')\n    left = 0\n    current_sum = 0\n    \n    for right in range(len(nums)):\n        current_sum += nums[right]\n        while current_sum >= target:\n            min_len = min(min_len, right - left + 1)\n            current_sum -= nums[left]\n            left += 1\n    \n    return min_len if min_len != float('inf') else 0",
+    "generated_code_full": "def min_subarray_len(target, nums):\n    min_len = float('inf')\n    left = 0\n    current_sum = 0\n    \n    for right in range(len(nums)):\n        current_sum += nums[right]\n        while current_sum >= target:\n            min_len = min(min_len, right - left + 1)\n            current_sum -= nums[left]\n            left += 1\n    \n    return min_len if min_len != float('inf') else 0",
+    "passed": true,
+    "error": null,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "index": 2,
+    "func_name": "longest_distinct_subsequence",
+    "question_preview": "Given an array of integers `arr`, you are to form a sequence by starting from the first element and at each step moving to the next different element (i.e., an element that hasn't been visited yet in the current sequence). Your task is to find the length of the longest subsequence that can be formed",
+    "generated_code_preview": "def longest_distinct_subsequence(arr):\n    n = len(arr)\n    if n == 0:\n        return 0\n    \n    dp = [1] * n\n    max_length = 1\n    \n    for i in range(1, n):\n        for j in range(i):\n            if arr[i] != arr[j]:\n                dp[i] = max(dp[i], dp[j] + 1)\n        max_length = max(max_length, dp[i])\n    \n    return max_length",
+    "generated_code_full": "def longest_distinct_subsequence(arr):\n    n = len(arr)\n    if n == 0:\n        return 0\n    \n    dp = [1] * n\n    max_length = 1\n    \n    for i in range(1, n):\n        for j in range(i):\n            if arr[i] != arr[j]:\n                dp[i] = max(dp[i], dp[j] + 1)\n        max_length = max(max_length, dp[i])\n    \n    return max_length",
+    "passed": false,
+    "error": "2 test(s) failed: test_longest_distinct_subsequence_disordered: AssertionError; test_longest_distinct_subsequence_repeated_subsequences: AssertionError",
+    "stdout": "",
+    "stderr": "2 test(s) failed: test_longest_distinct_subsequence_disordered: AssertionError; test_longest_distinct_subsequence_repeated_subsequences: AssertionError"
+  }
+]

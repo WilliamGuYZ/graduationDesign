@@ -1,0 +1,27 @@
+# ati-codegen 依赖清单
+# 安装方式：pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+#
+# ---- PyTorch（需手动安装，云平台镜像通常已预装）----
+# 如果云平台镜像已预装 PyTorch，则无需手动安装，直接 pip install -r 即可。
+# 如果没有预装，请先手动安装带 CUDA 的 PyTorch，再 pip install -r requirements.txt：
+#   CUDA 12.x: pip install torch --index-url https://download.pytorch.org/whl/cu121
+#   CUDA 11.8: pip install torch --index-url https://download.pytorch.org/whl/cu118
+
+# ---- Hugging Face 生态 ----
+transformers>=4.40.0
+datasets>=2.18.0
+peft>=0.10.0
+accelerate>=0.28.0
+
+# ---- 推理引擎（评测用，需要 Linux + NVIDIA GPU）----
+vllm>=0.4.0
+
+# ---- 数据处理 ----
+pandas>=2.0.0
+pyarrow>=15.0.0
+
+# ---- 工具 ----
+tqdm>=4.65.0
+
+# ---- 可视化（TensorBoard，训练日志）----
+tensorboard>=2.14.0
