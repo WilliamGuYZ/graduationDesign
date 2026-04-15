@@ -1,6 +1,6 @@
 """
 Qwen2.5-Coder-7B-Instruct LoRA 微调脚本
-数据格式: {"question": "...", "solution": "...", "test": "...", "test_info": [{"function_declaration": "...", "function_name": "...", "parameter_list": "..."}]}
+数据格式: {"question": "...", "solution": "...", "thought_step": "...", "test": "...", "test_info": [...], "tags": [...]}
 所有字段均已确认不为空
 """
 
@@ -29,7 +29,6 @@ DATA_PATH = os.path.join(PROJECT_ROOT, "data", "processed", "KodCode_train.jsonl
 LATEST_LORA_POINTER = os.path.join(PROJECT_ROOT, "train", "latest_lora_adapter.txt")
 OUTPUT_ROOT = os.path.join(PROJECT_ROOT, "train", "outputs")
 
-# 序列长度（已确认数据不超过 1024）
 MAX_LENGTH = 1024
 
 # LoRA 配置

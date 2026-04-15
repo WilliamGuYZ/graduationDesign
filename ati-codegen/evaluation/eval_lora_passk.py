@@ -1,7 +1,6 @@
 """
 Qwen2.5-Coder-7B-Instruct + LoRA 评估脚本
-数据格式与 train.py / eval_base_passk.py 一致:
-{"question": "...", "solution": "...", "test": "...", "test_info": [...]}
+数据格式: {"question": "...", "solution": "...", "thought_step": "...", "test": "...", "test_info": [...], "tags": [...]}
 """
 
 import gc
@@ -11,6 +10,8 @@ import re
 import subprocess
 import sys
 import warnings
+from datetime import datetime
+from math import comb
 from typing import Any, Dict, List, Optional, Tuple
 
 # =========================
@@ -42,21 +43,19 @@ _PROJECT_ROOT = os.path.dirname(_HERE)
 _SCRIPTS = os.path.join(_PROJECT_ROOT, "scripts")
 LORA_POINTER_FILE = os.path.join(_PROJECT_ROOT, "train", "latest_lora_adapter.txt")
 
-MODEL_PATH = os.path.join(_PROJECT_ROOT, "models", "Qwen2.5-Coder-7B-Instruct")
+MODEL_PATH   = os.path.join(_PROJECT_ROOT, "models", "Qwen2.5-Coder-7B-Instruct")
 DATASET_PATH = os.path.join(_PROJECT_ROOT, "data", "processed", "KodCode_eval.jsonl")
-RESULT_PATH = os.path.join(_PROJECT_ROOT, "evaluation", "results", "eval_lora_passk.txt")
-DEBUG_PATH = os.path.join(_PROJECT_ROOT, "evaluation", "results", "debug_lora_samples.json")
+RESULTS_DIR  = os.path.join(_PROJECT_ROOT, "evaluation", "results")
 
-TIMEOUT = 5
-MAX_TOKENS = 1024
+TIMEOUT     = 5
+MAX_TOKENS  = 1024
 NUM_SAMPLES = 10
-TEMPERATURE = 0.7
+TEMPERATURE = 0.3
 
-VLLM_MAX_MODEL_LEN = 2048
+VLLM_MAX_MODEL_LEN     = 2048
 GPU_MEMORY_UTILIZATION = 0.9
 
-DEBUG = False
-DEBUG_SAMPLE_COUNT = None
+SAMPLE_LIMIT: Optional[int] = None
 
 _SUBPROC_SNIPPET = (
     "import json,sys;sys.path.insert(0,sys.argv[1]);"
@@ -65,6 +64,14 @@ _SUBPROC_SNIPPET = (
     "r=test_solution_code(d['solution'],d['test'],[]);"
     "json.dump(list(r),sys.stdout)"
 )
+
+
+def pass_at_k(n: int, c: int, k: int) -> float:
+    if n < k:
+        return float("nan")
+    if n - c < k:
+        return 1.0
+    return 1.0 - comb(n - c, k) / comb(n, k)
 
 
 def _read_lora_adapter_dir() -> str:
@@ -193,6 +200,7 @@ def execute_test_with_debug(
 
 
 def main():
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     lora_path = _read_lora_adapter_dir()
 
     print("=" * 60)
@@ -276,9 +284,9 @@ def main():
 
     print(f"原始数据集大小: {len(dataset)} 条")
 
-    if DEBUG and DEBUG_SAMPLE_COUNT is not None:
-        dataset = dataset[:DEBUG_SAMPLE_COUNT]
-        print(f"调试模式: 只测试前 {len(dataset)} 条")
+    if SAMPLE_LIMIT:
+        dataset = dataset[:SAMPLE_LIMIT]
+        print(f"SAMPLE_LIMIT={SAMPLE_LIMIT}，仅评估前 {len(dataset)} 条")
 
     print("\n" + "=" * 60)
     print("验证原始 solution 代码...")
@@ -339,7 +347,6 @@ def main():
     print("=" * 60)
 
     problem_results: List[List[bool]] = [[] for _ in range(len(dataset))]
-    debug_samples: List[Dict[str, Any]] = []
     timeout_count = 0
 
     for data_idx, output in tqdm(
@@ -347,90 +354,68 @@ def main():
     ):
         generated = output.outputs[0].text
         code = extract_code(generated)
-
-        passed, error, _o, _e, _p = execute_test_with_debug(
-            code,
-            dataset[data_idx]["test_code"],
-            dataset[data_idx]["func_name"],
-            data_idx,
+        passed, error, _, _, _ = execute_test_with_debug(
+            code, dataset[data_idx]["test_code"], dataset[data_idx]["func_name"], data_idx
         )
         if error and "超时" in str(error):
             timeout_count += 1
-
         problem_results[data_idx].append(passed)
 
-        if DEBUG and len([s for s in debug_samples if s["index"] == data_idx]) == 0:
-            debug_samples.append(
-                {
-                    "index": data_idx,
-                    "func_name": dataset[data_idx]["func_name"],
-                    "question_preview": dataset[data_idx]["question"][:300],
-                    "generated_code_preview": code[:500] if code else "空",
-                    "passed": passed,
-                    "error": error,
-                }
-            )
+    if timeout_count:
+        print(f"\n⚠️ 超时: {timeout_count}/{len(all_prompts)} 次 ({timeout_count/len(all_prompts)*100:.1f}%)")
 
-    if DEBUG:
-        os.makedirs(os.path.dirname(DEBUG_PATH), exist_ok=True)
-        with open(DEBUG_PATH, "w", encoding="utf-8") as f:
-            json.dump(debug_samples, f, indent=2, ensure_ascii=False)
-        print(f"\n调试信息已保存至: {DEBUG_PATH}")
-
-    if timeout_count > 0:
-        print(
-            f"\n⚠️ 超时统计: {timeout_count}/{len(all_prompts)} 次 "
-            f"({timeout_count/len(all_prompts)*100:.1f}%)"
-        )
-
-    total_correct_pass1 = sum(
-        1 for samples in problem_results if samples and samples[0]
-    )
-    total_correct_pass5 = sum(
-        1 for samples in problem_results if len(samples) >= 5 and any(samples[:5])
-    )
-    total_correct_pass10 = sum(1 for samples in problem_results if any(samples))
-
+    # ── pass@k（无偏估计）────────────────────────────────────────────────────
+    K_LIST         = [1, 5, 10]
     total_problems = len(dataset)
-    pass1 = total_correct_pass1 / total_problems if total_problems > 0 else 0
-    pass5 = total_correct_pass5 / total_problems if total_problems > 0 else 0
-    pass10 = total_correct_pass10 / total_problems if total_problems > 0 else 0
+    results_passk: Dict[int, float] = {}
+    for k in K_LIST:
+        scores = [
+            pass_at_k(len(s), sum(s), k)
+            for s in problem_results
+            if len(s) == NUM_SAMPLES
+        ]
+        results_passk[k] = sum(scores) / len(scores) if scores else float("nan")
 
     print("\n" + "=" * 60)
     print("PASS@K 评估结果（LoRA）")
     print("=" * 60)
+    print(f"时间戳:              {timestamp}")
     print(f"总问题数:            {total_problems}")
     print(f"每问题样本数:        {NUM_SAMPLES}")
     print(f"温度参数:            {TEMPERATURE}")
     print(f"测试超时:            {TIMEOUT} 秒")
     print(f"LoRA 路径:           {lora_path}")
     print("-" * 60)
-    print(f"PASS@1:              {pass1:.4f} ({pass1 * 100:.2f}%)")
-    print(f"  正确数:            {total_correct_pass1}/{total_problems}")
-    print("-" * 60)
-    print(f"PASS@5:              {pass5:.4f} ({pass5 * 100:.2f}%)")
-    print(f"  正确数:            {total_correct_pass5}/{total_problems}")
-    print("-" * 60)
-    print(f"PASS@10:             {pass10:.4f} ({pass10 * 100:.2f}%)")
-    print(f"  正确数:            {total_correct_pass10}/{total_problems}")
+    for k in K_LIST:
+        v = results_passk[k]
+        if v != v:
+            print(f"PASS@{k:<2}:             N/A")
+        else:
+            print(f"PASS@{k:<2}:             {v:.4f} ({v*100:.2f}%)")
     print("=" * 60)
 
-    os.makedirs(os.path.dirname(RESULT_PATH), exist_ok=True)
-    with open(RESULT_PATH, "w", encoding="utf-8") as f:
-        f.write(f"总问题数:            {total_problems}\n")
-        f.write(f"每问题样本数:        {NUM_SAMPLES}\n")
-        f.write(f"温度参数:            {TEMPERATURE}\n")
-        f.write(f"测试超时:            {TIMEOUT} 秒\n")
-        f.write(f"LoRA 路径:           {lora_path}\n")
-        f.write(f"PASS@1:              {pass1:.4f} ({pass1 * 100:.2f}%)\n")
-        f.write(f"  正确数:            {total_correct_pass1}/{total_problems}\n")
-        f.write(f"PASS@5:              {pass5:.4f} ({pass5 * 100:.2f}%)\n")
-        f.write(f"  正确数:            {total_correct_pass5}/{total_problems}\n")
-        f.write(f"PASS@10:             {pass10:.4f} ({pass10 * 100:.2f}%)\n")
-        f.write(f"  正确数:            {total_correct_pass10}/{total_problems}\n")
+    os.makedirs(RESULTS_DIR, exist_ok=True)
 
-    print(f"\n结果已保存至: {RESULT_PATH}")
+    # 最终输出文件（固定文件名，每次运行覆盖）
+    output_file = os.path.join(RESULTS_DIR, "eval_lora_passk.json")
 
+    # 构建结果字典（只包含 summary）
+    results = {
+        "timestamp": timestamp,
+        "dataset": DATASET_PATH,
+        "num_problems": total_problems,
+        "num_samples": NUM_SAMPLES,
+        "temperature": TEMPERATURE,
+        "timeout": TIMEOUT,
+        "pass_at_k": {f"pass@{k}": round(results_passk[k], 4) for k in K_LIST},
+        "original_solution_pass_rate": round(solution_pass_count / n_ds, 4) if n_ds else 0,
+    }
+
+    # 保存为格式化的 JSON 文件
+    with open(output_file, "w", encoding="utf-8") as f:
+        json.dump(results, f, indent=2, ensure_ascii=False)
+
+    print(f"\n结果已保存至: {output_file}")
     del llm
     gc.collect()
 

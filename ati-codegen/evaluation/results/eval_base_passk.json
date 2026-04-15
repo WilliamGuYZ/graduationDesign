@@ -1,0 +1,14 @@
+{
+  "timestamp": "20260414_013736",
+  "dataset": "/home/ubuntu/yejunyin/graduationDesign/ati-codegen/data/processed/KodCode_eval.jsonl",
+  "num_problems": 1000,
+  "num_samples": 10,
+  "temperature": 0.3,
+  "timeout": 5,
+  "pass_at_k": {
+    "pass@1": 0.5985,
+    "pass@5": 0.6848,
+    "pass@10": 0.712
+  },
+  "original_solution_pass_rate": 0.996
+}
