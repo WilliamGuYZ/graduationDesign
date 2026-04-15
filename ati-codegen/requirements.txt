@@ -1,27 +1,49 @@
 # ati-codegen 依赖清单
-# 安装方式：pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 #
-# ---- PyTorch（需手动安装，云平台镜像通常已预装）----
-# 如果云平台镜像已预装 PyTorch，则无需手动安装，直接 pip install -r 即可。
-# 如果没有预装，请先手动安装带 CUDA 的 PyTorch，再 pip install -r requirements.txt：
-#   CUDA 12.x: pip install torch --index-url https://download.pytorch.org/whl/cu121
-#   CUDA 11.8: pip install torch --index-url https://download.pytorch.org/whl/cu118
+# 前置步骤（必须先执行，否则下载可能超时）：
+#   pip install --upgrade pip -i https://mirrors.aliyun.com/pypi/simple/ --trusted-host mirrors.aliyun.com --default-timeout=100
+#   pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/
+#   pip config set global.trusted-host mirrors.aliyun.com
+#
+# 配置好全局镜像后，安装方式：pip install -r requirements.txt
+#
+# 重要：以下依赖需要在阿里云 ECS GPU 服务器（Linux + NVIDIA GPU）上安装，
+# 本地 Windows 电脑（WSL / 虚拟机）仅作为 SSH 客户端使用，无需安装这些依赖。
+#
+# ---- PyTorch（需手动安装，阿里云深度学习镜像通常已预装）----
+# PyTorch 是深度学习的基础框架，LoRA 微调和模型推理均依赖 PyTorch 的 CUDA 后端进行 GPU 加速。
+# 如果使用阿里云深度学习镜像，PyTorch 已预装，直接 pip install -r 即可。
+# 如果选择了公共镜像没有预装，请先安装 torch 的依赖再安装 torch：
+#   pip install sympy networkx filelock
+#   CUDA 12.x: pip install torch --extra-index-url https://download.pytorch.org/whl/cu121
+#   CUDA 11.8: pip install torch --extra-index-url https://download.pytorch.org/whl/cu118
 
-# ---- Hugging Face 生态 ----
+# ---- Hugging Face 生态（模型加载、数据处理、LoRA 微调、分布式训练）----
+# transformers：加载和运行 Qwen2.5-Coder-7B-Instruct 基座模型，提供 Tokenizer 和模型架构
 transformers>=4.40.0
+# datasets：加载和处理 JSONL 格式的训练/评测数据集
 datasets>=2.18.0
+# peft：实现 LoRA（低秩适配）微调，只训练约 1% 的参数即可提升模型能力，大幅降低 GPU 显存需求
 peft>=0.10.0
+# accelerate：PyTorch 分布式训练和混合精度加速，自动管理 GPU 设备映射和梯度累积
 accelerate>=0.28.0
 
-# ---- 推理引擎（评测用，需要 Linux + NVIDIA GPU）----
+# ---- 推理引擎（评测用，仅支持 Linux + NVIDIA GPU）----
+# vLLM：高性能大模型推理引擎，使用 PagedAttention 技术实现高吞吐批量推理。
+# pass@k 评测需要对 1000 道题各采样 10 次（共 10,000 次推理），vLLM 可在 20-40 分钟内完成。
+# 注意：vLLM 仅支持 Linux 系统，不支持 Windows 和 macOS，这是本项目必须部署在 Linux 上的根本原因。
 vllm>=0.4.0
 
 # ---- 数据处理 ----
+# pandas：数据分析和处理，用于训练/评测数据集的划分和统计
 pandas>=2.0.0
+# pyarrow：读取 Parquet 格式的原始数据集（KodCode 原始数据为 Parquet 格式）
 pyarrow>=15.0.0
 
 # ---- 工具 ----
+# tqdm：进度条显示，用于训练和评测过程中的进度可视化
 tqdm>=4.65.0
 
 # ---- 可视化（TensorBoard，训练日志）----
+# tensorboard：记录和可视化训练过程中的 loss 曲线、学习率变化等指标
 tensorboard>=2.14.0

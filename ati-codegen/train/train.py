@@ -29,8 +29,8 @@ DATA_PATH = os.path.join(PROJECT_ROOT, "data", "processed", "KodCode_train.jsonl
 LATEST_LORA_POINTER = os.path.join(PROJECT_ROOT, "train", "latest_lora_adapter.txt")
 OUTPUT_ROOT = os.path.join(PROJECT_ROOT, "train", "outputs")
 
-# 序列长度（已确认数据不超过 1024）
-MAX_LENGTH = 1024
+# 序列长度（降低可大幅节省显存；24G 显卡建议 512）
+MAX_LENGTH = 512
 
 # LoRA 配置
 LORA_R = 32
@@ -41,9 +41,9 @@ LORA_TARGET_MODULES = [
     "gate_proj", "up_proj", "down_proj",
 ]
 
-# 训练配置
-BATCH_SIZE = 4
-GRADIENT_ACCUMULATION = 8
+# 训练配置（24G 显卡适配：batch=2, accumulation=16，等效 batch 不变）
+BATCH_SIZE = 2
+GRADIENT_ACCUMULATION = 16
 LEARNING_RATE = 2e-5
 NUM_EPOCHS = 3
 WARMUP_RATIO = 0.03
