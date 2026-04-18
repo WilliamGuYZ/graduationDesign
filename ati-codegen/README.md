@@ -48,26 +48,17 @@ ati-codegen/
 
 ### 运行环境
 
-本项目需要 **Linux + NVIDIA GPU** 环境。使用 **阿里云 ECS GPU 实例** 作为远程训练/评测服务器，使用 **本地 Windows 电脑上的 WSL 或虚拟机** 作为 SSH 客户端连接和操作云服务器。
+本项目需要 **Linux + NVIDIA GPU** 环境：在 **远程 Ubuntu GPU 服务器**（实验室机器或租用 GPU）上完成训练与 vLLM 评测；**本地 Windows** 通过 **WSL2 或 Linux 虚拟机** 使用 SSH 连接服务器、管理 Git 与拷贝结果。
 
 
 | 项目      | 要求                                              |
 | ------- | ----------------------------------------------- |
-| 云服务器 OS | Linux（阿里云 ECS 选择 Ubuntu 22.04 / 20.04）          |
+| 服务器 OS | Linux（推荐 Ubuntu 22.04 / 20.04）                   |
 | GPU     | NVIDIA，≥16GB 显存（推荐 24GB+）                       |
 | CUDA    | 11.8 或 12.x                                     |
-| Python  | 3.10+                                           |
-| 磁盘      | 系统盘 ≥40GB + 数据盘 ≥100GB（模型 14GB + 数据 + 训练输出）     |
-| 本地电脑    | Windows 10/11 + WSL2 或 Linux 虚拟机（用于 SSH 连接云服务器） |
-
-
-> **阿里云 GPU 实例规格选择**：
->
-> - **预算充足**：ecs.gn7e-c16g1.4xlarge（A100-80G，训练 + 评测全程无压力）
-> - **性价比首选**：ecs.gn7i-c16g1.4xlarge（A10-24G，完全够用）
-> - **最低门槛**：ecs.gn6v-c8g1.2xlarge（V100-16G，需调低 batch size，详见「显存调优」章节）
->
-> 也可使用**抢占式实例**（竞价实例），价格约为按量付费的 10%-20%，适合可中断的训练任务。
+| Python  | 3.10+（本仓库 `requirements.txt` 说明中推荐 3.11）      |
+| 磁盘      | 系统盘 ≥40GB；另建议 ≥100GB 可用空间（模型约 14GB + 数据 + 训练输出） |
+| 本地电脑    | Windows 10/11 + WSL2 或 Linux 虚拟机（SSH 客户端）        |
 
 ---
 
@@ -109,20 +100,20 @@ ati-codegen/
 本项目中，你的 **Windows 本地电脑不直接运行训练/评测代码**，它的角色是：
 
 1. **编写和管理代码**（在 IDE 中开发、用 Git 管理版本）
-2. **通过 SSH 连接到阿里云 GPU 服务器**（在本地 WSL 或虚拟机的 Linux 终端中操作）
-3. **将代码上传到云服务器**（通过 git clone、scp 等方式）
-4. **远程执行训练和评测**（所有计算在云服务器的 GPU 上完成）
-5. **下载结果到本地**（评测结果、训练日志等）
+2. **通过 SSH 连接到远程 GPU 服务器**（在本地 WSL 或虚拟机的 Linux 终端中操作）
+3. **与服务器同步代码**（`git clone` / `git pull`，必要时 `scp`）
+4. **在服务器上执行训练和评测**（计算在远端 GPU 上完成）
+5. **从服务器取回结果到本地**（评测结果、训练日志等）
 
 ```text
 ┌──────────────────────┐         SSH          ┌────────────────────────────┐
-│  Windows 本地电脑     │ ──────────────────→  │  阿里云 ECS GPU 服务器      │
+│  Windows 本地电脑     │ ──────────────────→  │  远程 Ubuntu GPU 服务器     │
 │                      │                      │                            │
-│  ┌────────────────┐  │   上传代码 (scp/git)  │  Ubuntu 22.04              │
-│  │ WSL2 / 虚拟机   │  │ ──────────────────→  │  NVIDIA GPU (A10/V100/A100)│
-│  │ (SSH 客户端)    │  │                      │  PyTorch + vLLM + PEFT     │
-│  └────────────────┘  │   下载结果 (scp)      │                            │
-│                      │ ←──────────────────   │  训练 → 评测 → 结果输出     │
+│  ┌────────────────┐  │   同步代码 (git/scp)  │  Ubuntu + NVIDIA GPU       │
+│  │ WSL2 / 虚拟机   │  │ ──────────────────→  │  PyTorch + vLLM + PEFT     │
+│  │ (SSH 客户端)    │  │                      │                            │
+│  └────────────────┘  │   取回结果 (scp)      │  训练 → 评测 → 结果输出     │
+│                      │ ←──────────────────   │                            │
 │  IDE / Git           │                      │                            │
 └──────────────────────┘                      └────────────────────────────┘
 ```
@@ -223,336 +214,210 @@ git --version
 
 ---
 
-### 阿里云 GPU 环境配置（完整教程）
+### 团队共享 Ubuntu 服务器（WSL / 虚拟机 SSH + `~/yejunyin` + Conda 共享环境）
 
-以下教程从 **本地 Windows 电脑（通过 WSL / 虚拟机的 Linux 终端）** 出发，完成阿里云 GPU 实例的创建、连接、环境搭建和代码运行全流程。
+在实验室或课程提供的 **Ubuntu GPU 服务器** 上完成训练与评测时，可按下面流程操作。说明如何从 **Windows 上的 WSL2 或 Linux 虚拟机** 用终端 **SSH 登录**，在 **`~/yejunyin`** 下从 GitHub **克隆本仓库**，配置 **团队共用的 Conda 环境**，按 **`requirements.txt`** 安装依赖，以及 **Git 同步与成员协作**。
 
-#### 第一步：创建阿里云 GPU 实例
+> **安全提示**：SSH 密码、密钥、面板截图等 **不要写入 Git**、不要发到公开群聊。密码由管理员或实验平台单独下发；连接信息变更时只更新本文档中的 **主机 / 端口 / 用户名**，不要写明文密码。
 
-1. 登录 [阿里云 ECS 控制台](https://ecs.console.aliyun.com/)
-2. 点击「创建实例」，选择地域（推荐华东/华北/华南，GPU 库存较充足）
-3. **实例规格**：选择 GPU 计算型（参考上方实例规格选择），搜索 `gn7i`、`gn7e` 或 `gn6v` 系列
-4. **镜像选择**（关键）：
-  - 进入「镜像市场」，搜索 **NVIDIA GPU Cloud VM Image** 或 **深度学习镜像**
-  - 推荐选择阿里云官方提供的 **深度学习镜像（Ubuntu 22.04）**，已预装 NVIDIA 驱动、CUDA、cuDNN、PyTorch 等
-  - 也可选择 Ubuntu 22.04 公共镜像，后续手动安装
-5. **存储**：系统盘 40GB SSD + 数据盘 100GB+ ESSD（用于存放模型和训练输出）
-6. **网络**：分配公网 IP（按流量计费），或后续通过 EIP 绑定
-7. **安全组**：放行 22 端口（SSH）、6006 端口（TensorBoard，可选）
-8. 设置 root 密码或 SSH 密钥对，确认创建
+#### 1. 在 WSL / 虚拟机里安装 SSH 客户端
 
-#### 第二步：从本地 Linux 环境连接到阿里云服务器
-
-打开本地 **WSL 终端**（或虚拟机终端），通过 SSH 连接云服务器：
+若尚未安装，在 **WSL Ubuntu** 或 **虚拟机 Ubuntu** 中执行：
 
 ```bash
-# ===== 在本地 WSL / 虚拟机终端中执行 =====
-
-# SSH 连接（替换 <公网IP> 为你的阿里云 ECS 公网 IP）
-ssh root@<公网IP>
-# 首次连接会提示确认指纹，输入 yes
-# 然后输入创建实例时设置的 root 密码
-
-# 连接成功后，你已经在阿里云服务器的终端中了
-# 确认 GPU 可用
-nvidia-smi
-```
-
-确认输出中有 GPU 信息（型号、显存、CUDA 版本）。如果使用阿里云深度学习镜像，驱动已预装，这一步应该直接通过。
-
-> **SSH 免密登录（可选，推荐配置）**：
-> 每次输入密码比较麻烦，可以配置 SSH 密钥免密登录：
->
-> ```bash
-> # ===== 在本地 WSL / 虚拟机终端中执行 =====
->
-> # 生成 SSH 密钥（如果已有 ~/.ssh/id_rsa 则跳过）
-> ssh-keygen -t rsa -b 4096
-> # 一路回车使用默认值
->
-> # 将公钥上传到云服务器
-> ssh-copy-id root@<公网IP>
->
-> # 之后连接就不用输密码了
-> ssh root@<公网IP>
-> ```
-
-> **如果 `nvidia-smi` 报错**：说明选择的是公共镜像且未安装驱动，需手动安装：
->
-> ```bash
-> # 在云服务器上执行
-> sudo apt update && sudo apt install -y nvidia-driver-535
-> sudo reboot
-> # 重启后重新 SSH 连接
-> ```
-
-#### 第三步：挂载数据盘 & 上传项目代码
-
-以下操作需要在两个不同的终端环境中执行，请注意区分：
-
-**3.1 在云服务器上挂载数据盘**（SSH 连上后执行）：
-
-```bash
-# ===== 在阿里云服务器终端中执行 =====
-
-# 查看数据盘设备名（通常为 /dev/vdb）
-lsblk
-
-# 格式化（仅首次，如已格式化请跳过）
-mkfs.ext4 /dev/vdb
-
-# 挂载到 /mnt/data
-mkdir -p /mnt/data
-mount /dev/vdb /mnt/data
-
-# 设置开机自动挂载
-echo '/dev/vdb /mnt/data ext4 defaults 0 0' >> /etc/fstab
-```
-
-**3.2 将项目代码上传到云服务器**：
-
-```bash
-# ===== 方式一：在云服务器上 git clone（强烈推荐，最省事）=====
-# 这是最推荐的方式：后续你在本地 push 更新后，只需在云服务器执行 git pull 即可同步，无需反复 scp 手动上传。
-# 本项目仓库地址：
-#   https://github.com/WilliamGuYZ/graduationDesign.git
-#
-# 注意：本仓库包含大文件数据（如 KodCode.jsonl），使用 Git LFS 管理。
-# 如果不安装 git-lfs，云服务器上拿到的会是“指针文件”，第一行类似：
-#   version https://git-lfs.github.com/spec/v1
-# 这会导致 split_train_eval.py 读 JSONL 时报 JSONDecodeError。
-#
-# 在云服务器终端中执行：
-cd /mnt/data
-apt update && apt install -y git-lfs
+sudo apt update && sudo apt install -y git git-lfs openssh-client
 git lfs install
+ssh -V
+```
+
+#### 2. SSH 连接服务器（非标准端口）
+
+在 **本地 WSL / 虚拟机终端** 中执行（`-p` 指定远端 SSH 端口；用户名与 IP 以实验平台为准）：
+
+```bash
+ssh -p 23822 ubuntu@116.172.94.6
+```
+
+首次连接会提示确认主机指纹，输入 `yes`；随后按提示输入密码（输入时终端不显示字符，属正常现象）。
+
+> **可选：免密登录**：在本地生成 SSH 密钥后，将公钥追加到服务器对应用户的 `~/.ssh/authorized_keys`（需至少一次能用密码登录以完成配置）。
+
+#### 3. 在 `~/yejunyin` 下克隆仓库
+
+**以下命令在已成功 SSH 登录的「服务器」上执行**（不是 WSL 里，除非你是在说明本地目录；此处指远端 `ubuntu@服务器`）：
+
+```bash
+mkdir -p ~/yejunyin
+cd ~/yejunyin
+
+# 若尚未配置 Git 用户信息（提交用，按需）
+# git config --global user.name "你的名字"
+# git config --global user.email "你的邮箱"
 
 git clone https://github.com/WilliamGuYZ/graduationDesign.git graduationDesign
 cd graduationDesign/ati-codegen
 
-# 拉取 LFS 大文件（关键一步）
+# 本仓库含 Git LFS 大文件，务必执行（否则 JSONL 可能是指针文件，脚本会报错）
 git lfs pull
-
-# ===== 方式二：从本地 WSL / 虚拟机通过 scp 上传 =====
-# 新开一个本地 WSL 终端（不要在 SSH 会话中执行）：
-
-# 如果项目在 Windows 桌面（WSL 中访问 Windows 路径需通过 /mnt/）
-cd /mnt/d/My\ Documents/11191857/Desktop/gyz/graduationDesign
-scp -r ati-codegen/ root@<公网IP>:/mnt/data/
-
-# 上传完成后，在云服务器终端中：
-cd /mnt/data/ati-codegen
-
-# ===== 方式三：通过 OSS 中转（适合大文件）=====
-# 先在本地打包上传到 OSS，再从 ECS 内网高速下载
-# ossutil cp oss://<bucket>/ati-codegen.tar.gz /mnt/data/
 ```
 
-> **提示**：强烈推荐方式一（git clone + git lfs pull）。方式二适合项目未推送到远程仓库，或仅临时传少量文件的情况。
+若团队使用 **私有仓库** 或 **Fork**，将上述 `git clone` 地址换成实际地址；本地目录名建议仍为 `graduationDesign`，与文档其余路径一致。
 
-#### 后续使用（已完成首次部署后）
+#### 4. 配置「共享」Conda 环境（推荐：`--prefix` 固定路径）
 
-当你在本地提交并推送了新代码后，在云服务器项目目录执行下面几条命令即可完成同步并重跑，无需再用 scp 手动上传：
+团队共用一台机器时，建议由 **一位管理员** 在 **`~/yejunyin` 下的固定路径** 创建环境，其他人只 **激活同一前缀**，避免每人一套环境占满磁盘。
+
+**4.1 管理员首次创建（服务器上已安装 Miniconda/Anaconda 的前提下）**
 
 ```bash
-cd /mnt/data/graduationDesign/ati-codegen
-git pull
-git lfs pull   # 只有仓库大文件更新时才需要
-pip install -r requirements.txt   # 只有依赖变化时才需要
+mkdir -p ~/yejunyin/conda-envs
 
-tmux new -s run
-bash scripts/train_eval.sh
+# 使用前缀路径创建环境（环境名路径可自定，全组统一即可）
+conda create --prefix ~/yejunyin/conda-envs/qwen-coder python=3.11 -y
+
+# 激活该环境（以后每次登录都要先激活再跑训练/评测）
+conda activate ~/yejunyin/conda-envs/qwen-coder
 ```
 
-#### 第四步：升级 pip & 配置阿里云镜像
+若 `conda activate` 对前缀路径报错，先执行一次 `conda init bash` 并重新打开 shell，或按 Conda 官方说明启用 `conda shell` 集成。
 
-阿里云 ECS 公共镜像自带的 pip 版本较旧（22.x），对国内镜像的处理存在 bug，会导致下载仍跳转到国外源超时。**必须先升级 pip 并配置全局镜像**：
+**4.2（可选）共享下载缓存，节省磁盘**
 
 ```bash
-# 1. 升级 pip（旧版 pip 对镜像重定向有 bug，导致实际下载仍走国外源）
-pip install --upgrade pip -i https://mirrors.aliyun.com/pypi/simple/ --trusted-host mirrors.aliyun.com --default-timeout=100
+mkdir -p ~/yejunyin/conda-pkgs
+conda config --add pkgs_dirs ~/yejunyin/conda-pkgs
+```
 
-# 2. 设置全局 pip 配置，永久使用阿里云镜像（之后所有 pip 命令自动走阿里云，无需每次加 -i 参数）
+多人并行安装时仍可能产生锁竞争，尽量由管理员统一装好依赖，成员只做 `git pull` 与运行。
+
+#### 5. 安装依赖（与 `requirements.txt` 头部说明一致）
+
+激活共享环境后，在 **`ati-codegen` 目录** 下按 **`requirements.txt`** 中的顺序操作（**务必先配 pip 镜像、再装 PyTorch、再 `pip install -r`**）：
+
+```bash
+cd ~/yejunyin/graduationDesign/ati-codegen
+conda activate ~/yejunyin/conda-envs/qwen-coder
+
+# 1）pip 使用国内镜像（与 requirements.txt 注释一致）
 pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/
 pip config set global.trusted-host mirrors.aliyun.com
+pip install --upgrade pip -i https://mirrors.aliyun.com/pypi/simple/ --trusted-host mirrors.aliyun.com
 
-# 3. 验证配置生效
-pip config list
-# 应输出：
-# global.index-url='https://mirrors.aliyun.com/pypi/simple/'
-# global.trusted-host='mirrors.aliyun.com'
+# 2）先安装 PyTorch（CUDA 版本需与服务器驱动匹配；以下为 requirements.txt 中的 cu121 示例）
+pip install torch==2.5.0 torchvision==0.20.0 torchaudio==2.5.0 --index-url https://download.pytorch.org/whl/cu121
+
+# 3）其余依赖一键安装
+pip install -r requirements.txt
 ```
 
-#### 第五步：安装依赖
+若服务器 CUDA / 驱动与 `cu121`  wheel 不匹配，请根据 `nvidia-smi` 与 PyTorch 官网说明改用 `cu118` 等对应命令，再执行 `pip install -r requirements.txt`。
+
+安装完成后可在服务器上验证：
 
 ```bash
-# 如果使用了深度学习镜像自带的 conda 环境，先激活（可选）
-# conda activate base
-
-# 确认 Python 和 PyTorch 是否已预装
-python3 --version
 python3 -c "import torch; print(f'PyTorch {torch.__version__}, CUDA: {torch.cuda.is_available()}, GPU: {torch.cuda.get_device_name(0)}')"
+python3 -c "import vllm; print(f'vLLM {vllm.__version__}')"
 ```
 
-**如果上述命令输出正常**（PyTorch 已安装、CUDA 可用），直接安装其余依赖：
+#### 6. Git 同步修改（日常开发）
+
+**在服务器项目目录中**：
 
 ```bash
-# 全局镜像已配置，直接 pip install 即可（自动走阿里云镜像）
+cd ~/yejunyin/graduationDesign/ati-codegen
+git status
+git pull
+git lfs pull    # 仅当大文件/LFS 指针有更新时
+```
+
+若 `requirements.txt` 有变更，激活共享环境后补装：
+
+```bash
+conda activate ~/yejunyin/conda-envs/qwen-coder
 pip install -r requirements.txt
 ```
 
-**如果选择了公共镜像没有预装 PyTorch**，需要先手动安装（推荐按顺序执行，避免依赖下载走国外源导致超时）：
+本地 Windows / 其他电脑修改代码后：**先 `commit` + `push` 到 GitHub**，再到服务器 **`git pull`**（大文件变更时 **`git lfs pull`**），保持与仓库一致。
+
+#### 7. 首次配置完成后，其他团队成员怎么用
+
+1. 从管理员或平台获取 **SSH 主机、端口、账号、密码**（或密钥），在 **WSL / 虚拟机** 中执行 `ssh -p <端口> ubuntu@<主机>` 登录。  
+2. `cd ~/yejunyin/graduationDesign/ati-codegen`（若仓库尚未克隆，则按 **第 3 节** 执行 `git clone` + `git lfs pull`）。  
+3. `conda activate ~/yejunyin/conda-envs/qwen-coder`（路径与管理员约定一致）。  
+4. `git pull`（及按需 `git lfs pull`）。  
+5. 按 README 其余章节下载模型、运行 `train/`、`evaluation/` 或 `scripts/`（多人共用同一 `ubuntu` 账号时，建议用 **tmux** 或 **不同工作目录** 避免互相覆盖进程与输出）。
+
+> **路径约定**：下文默认项目在 **`~/yejunyin/graduationDesign/ati-codegen`**；若你的克隆路径不同，请相应替换命令中的目录。训练/评测脚本以 **`ati-codegen` 内相对路径** 为准。
+
+---
+
+### 模型下载与训练评测流程（GPU 服务器）
+
+在已完成 **SSH 登录、克隆仓库、`git lfs pull`、Conda 环境与 `requirements.txt` 安装** 后，在服务器项目目录中继续：
 
 ```bash
-# 查看 CUDA 版本
-nvidia-smi   # 右上角显示 CUDA Version
-
-# 先安装 torch 的依赖（从阿里云镜像下载，很快）
-pip install sympy networkx filelock
-
-# 安装 PyTorch（torch 本体从 PyTorch 官方源下载，依赖已装好不会再下载）
-# CUDA 12.x：
-pip install torch --extra-index-url https://download.pytorch.org/whl/cu121
-# CUDA 11.8：
-# pip install torch --extra-index-url https://download.pytorch.org/whl/cu118
-
-# 然后安装项目其余依赖
-pip install -r requirements.txt
+cd ~/yejunyin/graduationDesign/ati-codegen
 ```
 
-> **验证安装**：
->
-> ```bash
-> python3 -c "import torch; print(f'PyTorch {torch.__version__}, CUDA: {torch.cuda.is_available()}, GPU: {torch.cuda.get_device_name(0)}')"
-> python3 -c "import vllm; print(f'vLLM {vllm.__version__}')"
-> ```
->
-> 两条命令都不报错即可。
-
-#### 第六步：下载基座模型
-
-将 Qwen2.5-Coder-7B-Instruct 模型下载到 `models/` 目录：
+#### 下载基座模型
 
 ```bash
-# 方式一：modelscope（阿里云内网下载极快，强烈推荐）
 pip install modelscope
 modelscope download --model Qwen/Qwen2.5-Coder-7B-Instruct --local_dir models/Qwen2.5-Coder-7B-Instruct
-
-# 方式二：huggingface-cli（阿里云 ECS 访问 huggingface 可能较慢，不推荐）
-# pip install huggingface_hub
-# huggingface-cli download Qwen/Qwen2.5-Coder-7B-Instruct --local-dir models/Qwen2.5-Coder-7B-Instruct
 ```
 
-> 下载约 14GB。阿里云 ECS 通过 modelscope 下载通常几分钟即可完成。
-> 下载完成后确认 `models/Qwen2.5-Coder-7B-Instruct/` 下有 `config.json`、`*.safetensors` 等文件。
->
-> **磁盘空间提示**：建议将模型下载到数据盘，再做软链接到项目目录：
->
-> ```bash
-> # 模型下载到数据盘 /mnt/data/
-> modelscope download --model Qwen/Qwen2.5-Coder-7B-Instruct --local_dir /mnt/data/Qwen2.5-Coder-7B-Instruct
-> ln -s /mnt/data/Qwen2.5-Coder-7B-Instruct models/Qwen2.5-Coder-7B-Instruct
-> ```
+下载约 14GB。也可使用 `huggingface-cli`（需能访问 Hugging Face）。完成后确认 `models/Qwen2.5-Coder-7B-Instruct/` 下有 `config.json`、`*.safetensors` 等。
 
-> **路径对齐提示（非常重要）**：
-> 训练/评测脚本默认使用项目内路径 `models/Qwen2.5-Coder-7B-Instruct`。如果你把模型下载在 `/root/models/...` 或 `/mnt/data/models/...`，必须通过软链接对齐到项目目录，否则 Transformers 会把这个路径当成 HuggingFace 仓库 id，报：
-> `HFValidationError: Repo id must be in the form ...`
-> ```bash
-> cd /mnt/data/graduationDesign/ati-codegen
-> mkdir -p models
-> ln -s /root/models/Qwen2.5-Coder-7B-Instruct models/Qwen2.5-Coder-7B-Instruct
-> # 或 ln -s /mnt/data/models/Qwen2.5-Coder-7B-Instruct models/Qwen2.5-Coder-7B-Instruct
-> ```
+> **路径对齐**：脚本默认读取 `models/Qwen2.5-Coder-7B-Instruct`。若模型放在其他挂载目录，请在 `ati-codegen/models/` 下用 **软链接** 指向真实路径，否则会报 `HFValidationError: Repo id must be in the form ...`。
 
-#### 第七步：数据准备
+#### 数据准备
 
-> **如果仓库中已有 `data/raw/KodCode.jsonl` 和 `data/processed/KodCode_train.jsonl`、`KodCode_eval.jsonl`，可以跳过本步骤，直接进入第八步。**
+> 若仓库中已有 `data/raw/KodCode.jsonl` 与 `data/processed/KodCode_train.jsonl`、`KodCode_eval.jsonl`，可跳过本节。
 
 ```bash
-# 0) 若你是用 git clone 拉的仓库：先确认 LFS 大文件已拉取（只需做一次）
-# 如果输出第一行是 "version https://git-lfs.github.com/spec/v1"，说明还是指针文件，需要执行：
-#   git lfs pull
 head -n 1 data/raw/KodCode.jsonl
+# 若首行为 Git LFS 指针，在仓库根目录执行：git lfs pull
 
-# 1. 如果只有 Parquet，先转换为 JSONL（会执行代码验证，耗时较长，约 30-60 分钟）
-#    如果 data/raw/KodCode.jsonl 已存在则跳过此步
-python3 scripts/convet_KodCode_to_jsonl.py
-
-# 2. 划分训练/评测集（9:1）
-#    如果 data/processed/ 下已有 KodCode_train.jsonl 和 KodCode_eval.jsonl 则跳过此步
+python3 scripts/convet_KodCode_to_jsonl.py   # 仅当需从 Parquet 生成 JSONL 时，耗时可较长
 python3 scripts/split_train_eval.py --ratio 0.9 --no-shuffle
 ```
 
-#### 第八步：运行全流程
+#### 运行训练与评测
 
-> **重要：云 GPU 上运行长任务务必使用 `tmux` 或 `nohup`，防止 SSH 断连导致训练中断！**
+> 长任务务必使用 **`tmux`** 或 **`nohup`**，避免 SSH 断连中断训练。
 
 ```bash
-# ===== 推荐：使用 tmux（可随时断开重连查看进度）=====
 tmux new -s train
 bash scripts/train_eval.sh
-# 断开 SSH 不影响运行：按 Ctrl+B 然后按 D
-# 重新连接后查看：tmux attach -t train
-
-# ===== 或者：使用 nohup（后台运行，日志写入文件）=====
-# nohup bash scripts/train_eval.sh > run.log 2>&1 &
-# tail -f run.log   # 查看实时日志
+# Ctrl+B 后按 D 脱离会话；再次连接：tmux attach -t train
 ```
 
-`train_eval.sh` 依次执行：数据集划分 → LoRA 训练 → 基座评测 → LoRA 评测。
-
-**也可以单步运行**：
+也可分步执行：
 
 ```bash
-# 1. LoRA 微调（约 1-3 小时，取决于 GPU 型号）
 python3 train/train.py
-
-# 2. 基座模型评测（约 20-40 分钟）
 python3 evaluation/eval_base_passk.py
-
-# 3. LoRA 模型评测（约 20-40 分钟，自动读取最新 adapter）
 python3 evaluation/eval_lora_passk.py
 ```
 
-#### 第九步：查看结果
+#### 查看结果
 
 ```bash
-# 评测结果
 cat evaluation/results/eval_base_passk.txt
 cat evaluation/results/eval_lora_passk.txt
-
-# TensorBoard 训练曲线（可选）
-tensorboard --logdir train/outputs/ --bind_all
-# 浏览器访问 http://<公网IP>:6006
-# 注意：需在阿里云安全组中放行 6006 端口（入方向，TCP）
+# TensorBoard（可选）：tensorboard --logdir train/outputs/ --bind_all
+# 从本机浏览器访问时，需通过 SSH 隧道或在服务器侧放行对应端口（如 6006）
 ```
 
-#### 第十步：下载结果到本地
+#### 将结果复制到本机
 
-训练和评测完成后，在本地 **WSL / 虚拟机终端**（不是 SSH 会话）中，将结果下载到本地电脑：
+在 **本地 WSL / 虚拟机** 终端（未 SSH 进服务器）中，示例（端口、用户、路径按实际修改）：
 
 ```bash
-# ===== 在本地 WSL / 虚拟机终端中执行（不是 SSH 会话）=====
-# 替换 <公网IP> 为你的实际公网 IP
-
-# 先进入你想保存结果的目录（例如 Windows 桌面）
-cd /mnt/d/My\ Documents/11191857/Desktop/gyz/graduationDesign/ati-codegen
-
-# 下载评测结果
-scp root@<公网IP>:/mnt/data/graduationDesign/ati-codegen/evaluation/results/*.txt ./evaluation/results/
-
-# 下载训练好的 LoRA adapter（如需后续部署或展示）
-scp -r root@<公网IP>:/mnt/data/graduationDesign/ati-codegen/train/outputs/ ./train/outputs/
-
-# 下载 TensorBoard 日志（可选，用于本地查看训练曲线）
-# scp -r root@<公网IP>:/mnt/data/graduationDesign/ati-codegen/train/outputs/*/runs/ ./tb_logs/
+mkdir -p evaluation/results train/outputs
+scp -P 23822 ubuntu@116.172.94.6:~/yejunyin/graduationDesign/ati-codegen/evaluation/results/*.txt ./evaluation/results/
+scp -r -P 23822 ubuntu@116.172.94.6:~/yejunyin/graduationDesign/ati-codegen/train/outputs/ ./train/
 ```
-
-> **省钱提醒**：
->
-> - 训练和评测完成后记得在 ECS 控制台**停止实例**！GPU 实例按时计费，停机后不再计算费用（仅收取少量云盘费用）
-> - 如使用**抢占式实例**，注意保存中间结果（checkpoint），被回收后可快速恢复
-> - 长期不用建议把结果下载到本地或上传到 OSS 后**释放实例**，避免持续产生云盘费用
 
 ---
 
@@ -580,11 +445,11 @@ scp -r root@<公网IP>:/mnt/data/graduationDesign/ati-codegen/train/outputs/ ./t
 | `NUM_SAMPLES`            | 10   | 降为 5（但会影响 pass@10） |
 
 
-> **各阿里云 GPU 实例参考配置**：
+> **按显存粗调的参考**：
 >
-> - **gn7e（A100-80G）**：全部默认值即可
-> - **gn7i（A10-24G）**：默认值即可，评测时 `GPU_MEMORY_UTILIZATION` 可降为 0.85
-> - **gn6v（V100-16G）**：训练 `BATCH_SIZE=1, GRADIENT_ACCUMULATION=32, MAX_LENGTH=512`；评测 `GPU_MEMORY_UTILIZATION=0.7, VLLM_MAX_MODEL_LEN=1024`
+> - **约 80GB 显存**：训练与评测可用默认参数
+> - **约 24GB 显存**：默认一般可用；评测可将 `GPU_MEMORY_UTILIZATION` 降至 0.85
+> - **16GB 显存**：训练建议 `BATCH_SIZE=1, GRADIENT_ACCUMULATION=32, MAX_LENGTH=512`；评测 `GPU_MEMORY_UTILIZATION=0.7, VLLM_MAX_MODEL_LEN=1024`
 
 ---
 
@@ -637,34 +502,34 @@ A: 执行 `sudo apt update && sudo apt install -y openssh-client` 安装 SSH 客
 A: Windows 磁盘自动挂载在 `/mnt/` 下。C 盘 → `/mnt/c/`，D 盘 → `/mnt/d/`。路径中的空格需要用 `\` 转义或用引号括起来，如 `cd "/mnt/d/My Documents/"`。
 
 **Q: 能不能不用 WSL / 虚拟机，直接在 Windows 的 CMD/PowerShell 中 SSH？**
-A: 可以。Windows 10 1809+ 自带 OpenSSH 客户端，在 PowerShell 中直接执行 `ssh root@<公网IP>` 即可。但 scp 上传文件时路径处理不如 Linux 终端方便，且后续操作（如查看 man 手册、使用 rsync 等）在 Linux 终端体验更好，因此推荐 WSL。
+A: 可以。Windows 10 1809+ 自带 OpenSSH 客户端，在 PowerShell 中执行 `ssh -p <端口> <用户>@<主机>` 即可。但 `scp` 等路径处理在 Linux 终端往往更省事，因此仍推荐 WSL。
 
-#### 云服务器相关
+#### 远程 GPU 服务器相关
 
 **Q: `nvidia-smi` 找不到命令？**
-A: NVIDIA 驱动未安装。检查是否选错了非 GPU 实例规格。如果选择的是公共镜像，需要手动安装驱动：`sudo apt install -y nvidia-driver-535 && sudo reboot`。使用阿里云深度学习镜像则不会出现此问题。
+A: 服务器未正确安装 NVIDIA 驱动，或当前无 GPU。在 Ubuntu 上可尝试：`sudo apt update && sudo apt install -y nvidia-driver-535`，然后 `sudo reboot`，再重新登录后执行 `nvidia-smi`。具体以机房/云厂商文档为准。
 
 **Q: `torch.cuda.is_available()` 返回 `False`？**
-A: PyTorch 的 CUDA 版本与系统不匹配。重新安装：`pip install torch --index-url https://download.pytorch.org/whl/cu121`。如果选了阿里云深度学习镜像，一般不会出现此问题。
+A: 多为 PyTorch 与驱动/CUDA 不匹配，或装成了 CPU 版 wheel。请按 `nvidia-smi` 显示的驱动与官方说明重装带 CUDA 的 PyTorch（例如 `pip install torch --index-url https://download.pytorch.org/whl/cu121`），并与本文「安装依赖」及 `requirements.txt` 中的版本说明对齐。
 
 **Q: `pip install torch` / `pip install sympy` 下载很慢或超时？**
-A: 先按「第四步：升级 pip & 配置阿里云镜像」升级 pip 并设置全局镜像。旧版 pip（22.x）可能会把下载跳转到 `files.pythonhosted.org`（国外）导致超时。公共镜像安装 torch 建议按「第五步」先装 `sympy/networkx/filelock` 再装 torch。
+A: 先升级 pip，并配置国内 PyPI 镜像（见上文「安装依赖」中的 `pip config set global.index-url`）。旧版 pip（如 22.x）可能仍把部分下载重定向到国外源。安装 torch 前可先 `pip install sympy networkx filelock`，再安装 PyTorch wheel。
 
 **Q: `pip install vllm` 特别慢或失败？**
-A: 使用阿里云 PyPI 镜像：`pip install vllm -i https://mirrors.aliyun.com/pypi/simple/ --trusted-host mirrors.aliyun.com`。如果编译报错，确认 CUDA 版本 ≥ 11.8 且有 gcc（`sudo apt install -y build-essential`）。
+A: 使用国内镜像安装：`pip install vllm -i https://mirrors.aliyun.com/pypi/simple/ --trusted-host mirrors.aliyun.com`。若编译失败，确认 CUDA 版本 ≥ 11.8 且已安装编译工具：`sudo apt install -y build-essential`。
 
 **Q: `bash scripts/train_eval.sh` 报 `set: pipefail: invalid option name`？**
-A: 脚本文件是 Windows 的 CRLF 换行导致的（实际变成 `pipefail\\r`）。在云服务器执行：
+A: 脚本文件是 Windows 的 CRLF 换行导致的（实际变成 `pipefail\\r`）。在远程 Linux 服务器上执行：
 ```bash
 apt update && apt install -y dos2unix
 dos2unix scripts/*.sh
 ```
 
 **Q: SSH 断开后训练就停了？**
-A: 长任务必须用 `tmux` 或 `nohup` 运行。参考第七步中的说明。即使关闭 WSL 终端或合上笔记本，云服务器上的 tmux 会话仍在运行。
+A: 长任务必须用 `tmux` 或 `nohup` 运行，见上文「运行训练与评测」。断开 SSH 不会结束服务器上已脱离的 `tmux` 会话。
 
 **Q: 训练时 OOM？**
-A: 降低 `train/train.py` 中的 `BATCH_SIZE`（如从 4 降为 2），同时增大 `GRADIENT_ACCUMULATION`（如从 8 增到 16）。参考「显存调优」章节中各显卡的参考配置。
+A: 降低 `train/train.py` 中的 `BATCH_SIZE`（如从 4 降为 2），同时增大 `GRADIENT_ACCUMULATION`（如从 8 增到 16）。参考「显存调优」章节中按显存的参考配置。
 
 **Q: 评测时 OOM？**
 A: 降低评测脚本中的 `GPU_MEMORY_UTILIZATION`（如从 0.9 降为 0.7）和 `VLLM_MAX_MODEL_LEN`（如从 2048 降为 1024）。
@@ -672,8 +537,8 @@ A: 降低评测脚本中的 `GPU_MEMORY_UTILIZATION`（如从 0.9 降为 0.7）�
 **Q: `latest_lora_adapter.txt` 路径不对？**
 A: 该文件在训练完成后自动生成，内容为 adapter 的绝对路径。如果把项目移到了新位置，需要手动修改文件内容指向正确路径，或重新训练。
 
-**Q: 阿里云数据盘没有自动挂载？**
-A: 阿里云 ECS 的数据盘需要手动挂载。参考第三步中的数据盘挂载操作，挂载到 `/mnt/data` 后即可使用。建议把模型和训练输出放在数据盘上。
+**Q: 额外数据盘没有自动挂载？**
+A: 云主机或实验室机器若挂了第二块盘，通常需要在系统里手动分区、`mkfs`、`mount` 并写入 `/etc/fstab`。挂载后可将大文件（模型、数据集）放在该盘上，并在项目 `models/` 下用软链接指向。
 
 **Q: `data/raw/KodCode.jsonl` 第一行是 `version https://git-lfs.github.com/spec/v1`？**
 A: 这是 Git LFS 的**指针文件**，说明你没有把 LFS 大文件拉下来（常见于未安装 git-lfs 或未执行 `git lfs pull`）。在**仓库根目录**执行：
@@ -687,25 +552,25 @@ git lfs pull
 **Q: `JSONDecodeError: Expecting value`（但不是 LFS 指针）？**
 A: 通常是文件开头带 BOM、夹杂空行、或某一行被截断/混入日志。`scripts/split_train_eval.py` 已增强：会自动跳过空行、去 BOM，并在报错时打印行号与内容预览，按提示定位并修复/重传数据即可。
 
-**Q: 安全组如何配置？**
-A: 在 ECS 控制台 → 实例 → 安全组 → 入方向规则中添加。必需放行 22/TCP（SSH），如需使用 TensorBoard 还需放行 6006/TCP。
+**Q: 无法从外网访问 TensorBoard 端口？**
+A: 除服务器本机防火墙（如 `ufw`）外，云厂商或机房还可能有机柜/安全组策略。更稳妥做法是用 **SSH 本地端口转发**：`ssh -L 6006:127.0.0.1:6006 -p <端口> <用户>@<主机>`，浏览器访问本机 `http://127.0.0.1:6006`。
 
 ---
 
 ### 原理速览（帮你理解“为什么要这么做”）
 
 - **Git LFS 指针文件**：仓库里大文件（数据集/模型等）用 LFS 管理，普通 `git clone` 只会拿到“指针文件”，必须 `git lfs pull` 才会拉到真实内容
-- **pip 下载超时**：国内云服务器直连国外 PyPI 容易超时；升级 pip + 设置国内镜像，可以避免下载跳转到国外源
+- **pip 下载超时**：国内网络直连国外 PyPI 容易超时；升级 pip + 设置国内镜像，可以减少下载被重定向到国外源
 - **模型软链接对齐**：脚本写死读取 `models/Qwen2.5-Coder-7B-Instruct`；把模型放在数据盘时，用软链接既省系统盘又不改代码
 - **tmux 保活**：训练/评测是长任务，tmux 会话不受 SSH 断开影响
 
 ### 注意事项
 
-1. **操作系统**：必须在 Linux 上运行（vLLM 不支持 Windows / macOS），阿里云 ECS 选择 Ubuntu 镜像即可
-2. **模型路径硬编码**：`models/Qwen2.5-Coder-7B-Instruct` 在多个脚本中硬编码，请确保模型放在此路径下（或通过软链接指向数据盘上的实际位置）
-3. `**latest_lora_adapter.txt`**：训练完成后自动写入适配器路径，LoRA 评测脚本读取此文件
+1. **操作系统**：必须在 Linux 上运行（vLLM 不支持 Windows / macOS），推荐使用 Ubuntu 22.04 / 20.04
+2. **模型路径硬编码**：`models/Qwen2.5-Coder-7B-Instruct` 在多个脚本中硬编码，请确保模型在此路径下（或通过软链接指向大盘上的实际目录）
+3. **`latest_lora_adapter.txt`**：训练完成后自动写入适配器路径，LoRA 评测脚本读取此文件
 4. **数据验证耗时**：`convet_KodCode_to_jsonl.py` 会 exec 每条代码做正确性验证，10,000 条可能需要较长时间
-5. **磁盘空间**：模型约 14GB + 训练输出约 1-2GB，建议数据盘至少 100GB（系统盘 40GB + 数据盘 100GB）
-6. **省钱**：阿里云 GPU 实例按量计费，完成后务必在 ECS 控制台停止实例；长时间不用建议把结果上传到 OSS 或下载到本地后释放实例
-7. **安全组**：确保已在阿里云安全组放行 SSH（22 端口），TensorBoard 需额外放行 6006 端口
+5. **磁盘空间**：模型约 14GB + 训练输出约 1–2GB，建议预留 ≥100GB 可用空间用于数据与 checkpoint
+6. **计费与资源**：若使用按量计费 GPU，任务结束后及时关机或释放实例；重要结果请先 `scp` 或推送到仓库/对象存储备份
+7. **网络访问**：SSH 端口可能非 22（如 `23822`）；对外暴露 TensorBoard 优先使用 SSH 隧道，见上文常见问题
 
