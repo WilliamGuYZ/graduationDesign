@@ -1,74 +1,73 @@
-## ati-codegen（毕设代码框架）
+# ati-codegen（毕设：算法代码生成）
 
-面向你的选题“**基于大语言模型的算法代码生成**”的研究型工程骨架，覆盖：
+面向选题「**基于大语言模型的算法代码生成**」的实验代码，主要包括：
 
-- **数据集构建**：LeetCode/自建题库 → 指令数据（Instruction/Input/Output）JSONL
-- **微调**：LoRA（PEFT）+ Transformers
-- **推理增强**：CoT（可扩展到 RAG / ATI：问题解析 + 模板检索 + 实例化）
-- **评测**：按测试用例执行并计算 **pass@k**
+- **数据**：从 KodCode 类数据得到可执行单测校验过的 JSONL，可选地用 API 补全 **思维链（thought_step）** 与 **算法标签（tags）**
+- **微调**：对 **Qwen2.5-Coder-7B-Instruct** 做 **LoRA**（`train/train.py` 仅代码，`train/train_cot.py` 为 CoT 格式）
+- **评测**：用 **vLLM** 批量生成，按题目自带 `test` 跑 **pass@k**，结果在 `evaluation/results/`
 
-### 目录结构
+环境安装与依赖说明见 **[SETUP.md](SETUP.md)**。
+
+---
+
+## 目录结构
 
 ```text
 ati-codegen/
-  configs/                # 配置（训练/推理/评测）
   data/
-    raw/                  # 原始数据（题面、样例等）
-    processed/            # 处理后的数据集（jsonl）
-  scripts/                # 命令行入口脚本
-  src/ati_codegen/        # 主包：数据/模板/模型/评测
-  templates/              # 算法模板库（可人工或自动扩展）
-  tests/                  # 单元测试（最小覆盖）
+    raw/                  # KodCode.parquet、KodCode.jsonl、标注中间文件等
+    processed/            # KodCode_train.jsonl、KodCode_eval.jsonl
+  scripts/
+    convet_KodCode_to_jsonl.py   # Parquet → JSONL，并做单测校验
+    validate_code_with_test.py   # 执行 solution + test，数据与评测共用
+    annotate_thought_steps.py     # 可选：生成 thought_step
+    annotate_algorithm_tags.py   # 可选：打 tags
+    split_train_eval.py          # 划分训练/评测集（默认读 KodCode_annotate.jsonl）
+    train_eval.sh                # Bash：划分 → 训练 → 基座与 LoRA 评测
+  train/
+    train.py                     # LoRA；最新 adapter 路径写入 latest_lora_adapter.txt
+    train_cot.py                 # CoT LoRA；指针为 latest_lora_cot_adapter.txt
+    outputs/                     # 训练产出（不入库）
+  evaluation/
+    eval_base_passk.py           # 基座 pass@k
+    eval_lora_passk.py           # LoRA pass@k
+    eval_lora_cot_passk.py       # CoT 评测
+    results/
+  models/
+    Qwen2.5-Coder-7B-Instruct/   # 基座权重，需自行下载放置（见 SETUP.md）
 ```
 
-### 快速开始（最小闭环）
+训练与评测的超参在各 `train/*.py`、`evaluation/*.py` 顶部配置，**没有**单独的 `configs/` 或 `src/` 包目录。
 
-1) 创建虚拟环境并安装依赖
+---
+
+## 流程说明
+
+**1. 数据**
+
+- `data/raw/KodCode.parquet` → 运行 `scripts/convet_KodCode_to_jsonl.py` → `data/raw/KodCode.jsonl`（字段与单测校验见脚本内说明）。
+- 可选：`annotate_thought_steps.py` 得到 `KodCode_with_thought.jsonl`，再 `annotate_algorithm_tags.py` 得到 `KodCode_annotate.jsonl`。
+- `split_train_eval.py` 默认读 `KodCode_annotate.jsonl`，输出 `data/processed/KodCode_train.jsonl` 与 `KodCode_eval.jsonl`（比例、是否打乱见脚本参数）。`train_eval.sh` 里用的是**顺序划分**（`--no-shuffle`）。
+
+**2. 训练**
+
+- 训练集路径在 `train/train.py`、`train_cot.py` 里指向 `data/processed/KodCode_train.jsonl`。
+- 跑完后会在 `train/outputs/` 下生成带时间戳目录，并把当前 adapter 目录写入 `latest_lora_adapter.txt` 或 `latest_lora_cot_adapter.txt`，供评测脚本读取。
+
+**3. 评测**
+
+- 评测集默认 `data/processed/KodCode_eval.jsonl`，用 vLLM 多次采样生成，再通过 `validate_code_with_test` 统计 pass@k，结果写入 `evaluation/results/`。
+
+**4. 一键跑通（Linux / Git Bash / WSL）**
 
 ```bash
-python -m venv .venv
-.\.venv\Scripts\activate
-pip install -r requirements.txt
+bash scripts/train_eval.sh
 ```
 
-2) 生成一份示例数据集（用于跑通流程）
+内容为：划分 → `python train/train.py` → `eval_base_passk.py` → `eval_lora_passk.py`。若做 **CoT** 实验，需自行改用 `train_cot.py` 与 `eval_lora_cot_passk.py`。
 
-```bash
-python scripts/make_mock_dataset.py --out data/processed/mock.jsonl
-```
+---
 
-3) 用“占位模型”跑一次生成与评测（不需要 GPU）
+## 依赖
 
-```bash
-python scripts/eval_passk.py --dataset data/processed/mock.jsonl --k 1
-```
-### 第3-4周：LeetCode 数据采集与预处理（JSONL）
-
-我们提供了 `leetcode.cn` 的 GraphQL 抓取脚本，把题面清洗成纯文本，并按语言输出函数签名（`codeSnippets`），最终落盘 JSONL。
-
-```bash
-python scripts/build_dataset_leetcode_cn.py ^
-  --out data/processed/leetcode-cn.jsonl ^
-  --limit 200 ^
-  --difficulty MEDIUM ^
-  --languages python,java ^
-  --prefer-translated
-```
-
-如果遇到 403/风控，把浏览器里 `leetcode.cn` 的 Cookie 复制出来传入：
-
-```bash
-python scripts/build_dataset_leetcode_cn.py --out data/processed/leetcode-cn.jsonl --limit 50 --cookie "<YOUR_COOKIE>"
-```
-
-注意：LeetCode 公开接口拿不到隐藏测试用例，因此导出的 `tests` 字段默认为空。你后续可以：
-- 用开源数据集（如 HumanEval-X）做可执行评测
-- 或按你的开题方案自建 `TemplateLeetcode`：自己维护题目测试（推荐）
-
-### 下一步你需要接入的真实内容
-
-- **数据**：把你抓取/整理的 LeetCode 数据落到 `data/raw/`，再写/补 `scripts/build_dataset.py`
-- **模型**：在 `configs/` 填你的基座模型（如 Qwen2.5-Coder / CodeGeeX / Llama）
-- **LoRA 微调**：跑 `scripts/train_lora.py`（骨架已给出参数与入口）
-- **ATI/RAG**：在 `src/ati_codegen/retrieval/` 与 `src/ati_codegen/templates/` 扩展检索与模板实例化策略
-
+`requirements.txt` 为某台机器上的完整 **`pip freeze`**（含 PyTorch CUDA 版、vLLM 等），换电脑安装可能需按 PyTorch / vLLM 文档调整索引或版本，见 **SETUP.md**。
