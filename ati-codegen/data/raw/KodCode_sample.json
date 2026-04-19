@@ -1,0 +1,347 @@
+[
+  {
+    "version": "v1.0",
+    "style": "instruct",
+    "subset": "Leetcode",
+    "question_id": "Leetcode_3_I",
+    "question": "Given a list of integers `nums`, find the maximum product of any two distinct elements in the list. Return the maximum product. For example, given `nums = [5, 3, -1, 9, -7]`, the maximum product would be `5 * 9 = 45`.",
+    "solution": "def max_product(nums):\n    \"\"\"\n    Returns the maximum product of any two distinct elements in the list.\n    \"\"\"\n    # Sort the list\n    nums.sort()\n    \n    # The maximum product could be from the two highest values or two lowest values (in case they are negative)\n    return max(nums[-1] * nums[-2], nums[0] * nums[1])",
+    "test": "from solution import max_product\n\ndef test_max_product_positive_numbers():\n    assert max_product([1, 5, 3, 7, 9]) == 63  # 7 * 9 = 63\n\ndef test_max_product_with_negatives():\n    assert max_product([-1, -3, -5, 2, 4]) == 15  # -3 * -5 = 15\n\ndef test_max_product_mixed_signs():\n    assert max_product([5, 3, -1, 9, -7]) == 45  # 5 * 9 = 45\n\ndef test_max_product_two_numbers():\n    assert max_product([2, 3]) == 6  # 2 * 3 = 6\n\ndef test_max_product_single_zero():\n    assert max_product([0, 5, 10]) == 50  # 5 * 10 = 50\n\ndef test_max_product_zeroes():\n    assert max_product([0, 0, 2, 3]) == 6  # 2 * 3 = 6\n\ndef test_max_product_large_numbers():\n    assert max_product([1000, 3000, 5000, 2000]) == 15000000  # 3000 * 5000 = 15000000\n\ndef test_max_product_identical_elements():\n    assert max_product([5, 5, 5, 5]) == 25  # 5 * 5 = 25",
+    "test_info": [
+      {
+        "docstring": "Returns the maximum product of any two distinct elements in the list.",
+        "function_declaration": "def max_product(nums):",
+        "function_name": "max_product",
+        "parameter_list": "(nums)"
+      }
+    ],
+    "gpt_pass_sequence": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      1,
+      0,
+      0
+    ],
+    "gpt_pass_trial_num": 1,
+    "gpt_difficulty": "hard",
+    "gpt_pass_percentage": 0.1,
+    "trials": {
+      "trial_gpt4o_0": {
+        "file_source": "CodeGen_instruction_50000_combined_sanitized_prepared_0_results_combined.jsonl",
+        "solution_code": "def max_product(nums):\n    \"\"\"\n    Returns the maximum product of any two distinct elements in the list.\n    \n    :param nums: List of integers\n    :return: Maximum product of any two distinct elements\n    \"\"\"\n    if len(nums) < 2:\n        raise ValueError(\"List must contain at least two elements\")\n    \n    nums.sort()\n    return max(nums[0] * nums[1], nums[-1] * nums[-2])",
+        "test_code": "def test_max_product_with_positive_numbers():\n    assert max_product([5, 3, 9]) == 45\n\ndef test_max_product_with_negatives():\n    assert max_product([5, 3, -1, 9, -7]) == 45\n\ndef test_max_product_with_all_negatives():\n    assert max_product([-5, -3, -9, -1]) == -3\n\ndef test_max_product_with_mix_of_positives_and_negatives():\n    assert max_product([-10, -20, 5, 2]) == 200\n\ndef test_max_product_with_two_elements():\n    assert max_product([1, 10]) == 10\n\ndef test_max_product_with_large_numbers():\n    assert max_product([100000, 200000, 300000]) == 60000000000\n\ndef test_max_product_with_only_two_negatives():\n    assert max_product([-1000, -2000]) == 2000000\n\ndef test_max_product_with_duplicates():\n    assert max_product([3, 3, 3, -1]) == 9\n\ndef test_max_product_raises_value_error_with_too_few_elements():\n    try:\n        max_product([5])\n    except ValueError as e:\n        assert str(e) == \"List must contain at least two elements\"",
+        "test_coverage": null,
+        "test_result": "Fail"
+      },
+      "trial_gpt4o_1": {
+        "file_source": "CodeGen_instruction_50000_combined_sanitized_prepared_1_results_combined.jsonl",
+        "solution_code": "def max_product(nums):\n    \"\"\"\n    Given a list of integers nums, find the maximum product of any two distinct elements in the list.\n    \n    Parameters:\n    nums (list): List of integers.\n\n    Returns:\n    int: Maximum product of any two distinct elements.\n    \"\"\"\n    nums.sort()\n    return max(nums[0]*nums[1], nums[-1]*nums[-2])",
+        "test_code": "from solution import max_product\n\ndef test_positive_numbers():\n    assert max_product([2, 4, 6, 8]) == 48\n\ndef test_with_negatives():\n    assert max_product([5, 3, -1, 9, -7]) == 45\n    assert max_product([-10, -20, 5, 2]) == 200\n\ndef test_all_negative_numbers():\n    assert max_product([-5, -3, -2, -4]) == 6\n\ndef test_including_zero():\n    assert max_product([1, 2, 3, 0]) == 6\n    assert max_product([0, -3, -2, -1, 1]) == 3\n\ndef test_two_elements():\n    assert max_product([3, 5]) == 15\n    assert max_product([-4, 2]) == -8\n\ndef test_large_numbers():\n    assert max_product([1000, 2000, -2000]) == 4000000",
+        "test_coverage": null,
+        "test_result": "Fail"
+      },
+      "trial_gpt4o_2": {
+        "file_source": "CodeGen_instruction_50000_combined_sanitized_prepared_2_results_combined.jsonl",
+        "solution_code": "def max_product(nums):\n    \"\"\"\n    Returns the maximum product of any two distinct elements in the list nums.\n    \"\"\"\n    if len(nums) < 2:\n        raise ValueError(\"The list must contain at least two elements.\")\n    \n    nums.sort()\n    \n    # The maximum product will be the maximum of the product of the two largest numbers \n    # or the product of the two smallest numbers (in case they're negative and their product is positive)\n    max1 = nums[-1] * nums[-2]\n    max2 = nums[0] * nums[1]\n    \n    return max(max1, max2)",
+        "test_code": "from solution import max_product\n\ndef test_max_product_all_positive():\n    assert max_product([5, 3, 1, 9, 7]) == 63\n\ndef test_max_product_include_negatives():\n    assert max_product([5, 3, -1, 9, -7]) == 45\n\ndef test_max_product_all_negatives():\n    assert max_product([-5, -3, -1, -9, -7]) == -3\n\ndef test_max_product_mixed():\n    assert max_product([-10, -10, 5, 2]) == 100\n\ndef test_max_product_minimum_elements():\n    assert max_product([3, 4]) == 12\n\ndef test_max_product_zero_included():\n    assert max_product([0, 4, 3, 2]) == 12\n\ndef test_max_product_all_zeros():\n    assert max_product([0, 0, 0, 0]) == 0\n\ndef test_max_product_two_largest_same_value():\n    assert max_product([3, 3, 3, 3]) == 9\n\ndef test_max_product_raises_error_for_too_few_elements():\n    try:\n        max_product([1])\n    except ValueError as e:\n        assert str(e) == \"The list must contain at least two elements\"\n    else:\n        assert False, \"Expected ValueError, but no exception was raised\"",
+        "test_coverage": null,
+        "test_result": "Fail"
+      },
+      "trial_gpt4o_3": {
+        "file_source": "CodeGen_instruction_50000_combined_sanitized_prepared_3_results_combined.jsonl",
+        "solution_code": "def max_product(nums):\n    \"\"\"\n    Returns the maximum product of any two distinct elements in the list.\n    \"\"\"\n    if len(nums) < 2:\n        raise ValueError(\"The list must contain at least two elements.\")\n    \n    nums.sort()\n    \n    # The maximum product can be from the two largest positive numbers\n    # Or from the two smallest (most negative) numbers, because multiplying two\n    # negative numbers yields a positive number\n    return max(nums[-1] * nums[-2], nums[0] * nums[1])",
+        "test_code": "from solution import max_product\n\ndef test_max_product_positive_numbers():\n    nums = [1, 2, 3, 4, 5]\n    assert max_product(nums) == 20  # 4 * 5\n\ndef test_max_product_including_negatives():\n    nums = [5, 3, -1, 9, -7]\n    assert max_product(nums) == 45  # 5 * 9\n\ndef test_max_product_only_negatives():\n    nums = [-10, -3, -1, -4, -5]\n    assert max_product(nums) == 15  # -3 * -5\n\ndef test_max_product_mixed_sign_numbers():\n    nums = [-10, -3, 1, 2, 10]\n    assert max_product(nums) == 100  # -10 * -10 (or 10 * 10)\n\ndef test_max_product_edge_case_two_elements():\n    nums = [1, 2]\n    assert max_product(nums) == 2  # 1 * 2\n\ndef test_max_product_edge_case_two_negatives():\n    nums = [-1, -2]\n    assert max_product(nums) == 2  # -1 * -2\n\ndef test_max_product_identical_elements():\n    nums = [2, 2, 2, 2]\n    assert max_product(nums) == 4  # 2 * 2\n\ndef test_max_product_large_numbers():\n    nums = [1000, 100000, 1000000, -1000, -100000]\n    assert max_product(nums) == 100000000  # 100000 * 1000000",
+        "test_coverage": null,
+        "test_result": "Fail"
+      },
+      "trial_gpt4o_4": {
+        "file_source": "CodeGen_instruction_50000_combined_sanitized_prepared_4_results_combined.jsonl",
+        "solution_code": "def max_product(nums):\n    \"\"\"\n    Finds the maximum product of any two distinct elements in the list.\n    \"\"\"\n    nums.sort()\n    return max(nums[-1] * nums[-2], nums[0] * nums[1])",
+        "test_code": "from solution import max_product\n\ndef test_max_product_positive_numbers():\n    assert max_product([1, 5, 3, 2, 8]) == 40  # 8 * 5\n\ndef test_max_product_with_negatives():\n    assert max_product([5, 3, -1, 9, -7]) == 45  # 5 * 9\n\ndef test_max_product_all_negatives():\n    assert max_product([-1, -2, -3, -4]) == -1  # -1 * -2\n\ndef test_max_product_mixture():\n    assert max_product([-10, 1, 3, -5, 2]) == 6  # 2 * 3\n\ndef test_max_product_zeros():\n    assert max_product([0, 0, 2, 3]) == 6  # 2 * 3\n    assert max_product([0, 0, -2, -3]) == 0  # 0 * -2\n\ndef test_max_product_multiple_same_max():\n    assert max_product([1, 2, 2, 2, 3, 3]) == 9  # 3 * 3",
+        "test_coverage": null,
+        "test_result": "Fail"
+      },
+      "trial_gpt4o_5": {
+        "file_source": "CodeGen_instruction_50000_combined_sanitized_prepared_5_results_combined.jsonl",
+        "solution_code": "def max_product_of_two(nums):\n    \"\"\"\n    Returns the maximum product of any two distinct elements in the list.\n    \"\"\"\n    if len(nums) < 2:\n        raise ValueError(\"At least two elements are required\")\n    \n    nums.sort()\n    return max(nums[0] * nums[1], nums[-1] * nums[-2])",
+        "test_code": "import pytest\nfrom solution import max_product_of_two\n\ndef test_example():\n    nums = [5, 3, -1, 9, -7]\n    assert max_product_of_two(nums) == 45\n\ndef test_all_positive():\n    nums = [1, 2, 3, 4, 5]\n    assert max_product_of_two(nums) == 20\n\ndef test_all_negative():\n    nums = [-1, -2, -3, -4, -5]\n    assert max_product_of_two(nums) == -1\n\ndef test_positive_and_negative():\n    nums = [-10, -3, 5, 6, -2]\n    assert max_product_of_two(nums) == 30\n\ndef test_including_zeros():\n    nums = [0, 1, 2, 3, 4]\n    assert max_product_of_two(nums) == 12\n    nums = [0, 0, -1, -2, -3]\n    assert max_product_of_two(nums) == 0\n\ndef test_single_product_case():\n    nums = [1, 0, -5, -2]\n    assert max_product_of_two(nums) == 10\n\ndef test_raise_error_for_insufficient_elements():\n    nums = [1]\n    with pytest.raises(ValueError):\n        max_product_of_two(nums)",
+        "test_coverage": null,
+        "test_result": "Fail"
+      },
+      "trial_gpt4o_6": {
+        "file_source": "CodeGen_instruction_50000_combined_sanitized_prepared_6_results_combined.jsonl",
+        "solution_code": "def max_product(nums):\n    \"\"\"\n    Returns the maximum product of any two distinct elements in the list nums.\n    \"\"\"\n    if len(nums) < 2:\n        return None  # Not enough elements to form a pair\n\n    nums.sort()\n    # The maximum product can be formed by:\n    # 1. The product of the two largest numbers\n    # 2. The product of the two smallest numbers (if they are both negative)\n    return max(nums[0] * nums[1], nums[-1] * nums[-2])",
+        "test_code": "from solution import max_product\n\ndef test_max_product_typical_case():\n    assert max_product([5, 3, -1, 9, -7]) == 45\n\ndef test_max_product_single_positive_pair():\n    assert max_product([1, 2]) == 2\n\ndef test_max_product_with_negatives():\n    assert max_product([-10, -20, 5, 3]) == 200\n\ndef test_max_product_all_negatives():\n    assert max_product([-10, -20, -5, -3]) == 200\n\ndef test_max_product_single_pair():\n    assert max_product([-1, -2]) == 2\n\ndef test_max_product_long_list():\n    assert max_product([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, -11, -12, -13, -14, 100]) == 1000\n\ndef test_max_product_not_enough_elements():\n    assert max_product([5]) == None\n\ndef test_max_product_mixed_negatives_and_positives():\n    assert max_product([3, 4, -2, 5, -6]) == 12",
+        "test_coverage": null,
+        "test_result": "Fail"
+      },
+      "trial_gpt4o_7": {
+        "file_source": "CodeGen_instruction_50000_combined_sanitized_prepared_7_results_combined.jsonl",
+        "solution_code": "def max_product(nums):\n    \"\"\"\n    Returns the maximum product of any two distinct elements in the list.\n    \"\"\"\n    # Sort the list\n    nums.sort()\n    \n    # The maximum product could be from the two highest values or two lowest values (in case they are negative)\n    return max(nums[-1] * nums[-2], nums[0] * nums[1])",
+        "test_code": "from solution import max_product\n\ndef test_max_product_positive_numbers():\n    assert max_product([1, 5, 3, 7, 9]) == 63  # 7 * 9 = 63\n\ndef test_max_product_with_negatives():\n    assert max_product([-1, -3, -5, 2, 4]) == 15  # -3 * -5 = 15\n\ndef test_max_product_mixed_signs():\n    assert max_product([5, 3, -1, 9, -7]) == 45  # 5 * 9 = 45\n\ndef test_max_product_two_numbers():\n    assert max_product([2, 3]) == 6  # 2 * 3 = 6\n\ndef test_max_product_single_zero():\n    assert max_product([0, 5, 10]) == 50  # 5 * 10 = 50\n\ndef test_max_product_zeroes():\n    assert max_product([0, 0, 2, 3]) == 6  # 2 * 3 = 6\n\ndef test_max_product_large_numbers():\n    assert max_product([1000, 3000, 5000, 2000]) == 15000000  # 3000 * 5000 = 15000000\n\ndef test_max_product_identical_elements():\n    assert max_product([5, 5, 5, 5]) == 25  # 5 * 5 = 25",
+        "test_coverage": 100.0,
+        "test_result": "Pass"
+      },
+      "trial_gpt4o_8": {
+        "file_source": "CodeGen_instruction_50000_combined_sanitized_prepared_8_results_combined.jsonl",
+        "solution_code": "def maximum_product_of_two(nums):\n    \"\"\"\n    Returns the maximum product of any two distinct elements in the list.\n    \n    :param nums: List of integers\n    :return: Maximum product of any two distinct elements\n    \"\"\"\n    nums.sort()\n    # The maximum product can be from the two largest numbers or the two smallest (if they are negative)\n    candidate1 = nums[-1] * nums[-2]  # Largest and the second largest\n    candidate2 = nums[0] * nums[1]    # Smallest and the second smallest (both negative)\n\n    return max(candidate1, candidate2)",
+        "test_code": "from solution import maximum_product_of_two\n\ndef test_positive_numbers():\n    assert maximum_product_of_two([5, 3, 9, 7]) == 63  # 9 * 7\n\ndef test_all_negative_numbers():\n    assert maximum_product_of_two([-5, -3, -9, -7]) == 35  # (-5) * (-7)\n\ndef test_mixed_sign_numbers():\n    assert maximum_product_of_two([5, 3, -1, 9, -7]) == 45  # 5 * 9\n\ndef test_mixed_sign_numbers_with_zeros():\n    assert maximum_product_of_two([5, 3, 0, -1, 9, -7]) == 45  # 5 * 9\n\ndef test_large_value_numbers():\n    assert maximum_product_of_two([1000, 2000, 3000, -1000, -2000, -3000]) == 9000000  # 3000 * 3000\n\ndef test_tie_cases():\n    assert maximum_product_of_two([1, 2, 1, 2]) == 4  # 2 * 2\n    assert maximum_product_of_two([-1, -2, -1, -2]) == 4  # (-2) * (-2)\n    \ndef test_minimum_length():\n    assert maximum_product_of_two([1, 2]) == 2  # Only two numbers, 1 * 2",
+        "test_coverage": null,
+        "test_result": "Fail"
+      },
+      "trial_gpt4o_9": {
+        "file_source": "CodeGen_instruction_50000_combined_sanitized_prepared_9_results_combined.jsonl",
+        "solution_code": "def max_product(nums):\n    \"\"\"\n    Returns the maximum product of any two distinct elements in the list.\n    \"\"\"\n    if len(nums) < 2:\n        raise ValueError(\"The list must contain at least two elements.\")\n    \n    # Initialize the two largest and two smallest values\n    max1 = max2 = float('-inf')\n    min1 = min2 = float('inf')\n    \n    for num in nums:\n        if num > max1:\n            max2 = max1\n            max1 = num\n        elif num > max2:\n            max2 = num\n        \n        if num < min1:\n            min2 = min1\n            min1 = num\n        elif num < min2:\n            min2 = num\n    \n    return max(max1 * max2, min1 * min2)",
+        "test_code": "from solution import max_product\n\ndef test_max_product_with_positive_numbers():\n    assert max_product([1, 2, 3, 4, 5]) == 20  # 4 * 5\n\ndef test_max_product_with_mixed_numbers():\n    assert max_product([5, 3, -1, 9, -7]) == 45  # 5 * 9\n\ndef test_max_product_with_two_elements():\n    assert max_product([7, -3]) == -21  # 7 * -3\n\ndef test_max_product_with_all_negative_numbers():\n    assert max_product([-10, -3, -5, -2]) == -6  # -2 * -3\n\ndef test_max_product_with_duplicates():\n    assert max_product([1, 2, 3, 2]) == 6  # 2 * 3\n\ndef test_max_product_with_zero():\n    assert max_product([0, -1, 2, 3]) == 6  # 2 * 3",
+        "test_coverage": null,
+        "test_result": "Fail"
+      }
+    },
+    "chosen_trial": "trial_gpt4o_7",
+    "metadata": {
+      "original_instruction": "",
+      "prompt_id": "0000000003",
+      "row_id": 3,
+      "seed_ids": "['1028', '54', '1009']"
+    },
+    "benchmark_similarity": 0.7460421919822693,
+    "benchmark_instruction": "",
+    "benchmark_task_id": "",
+    "filter_reason": ""
+  },
+  {
+    "version": "v1.0",
+    "style": "instruct",
+    "subset": "Leetcode",
+    "question_id": "Leetcode_8_I",
+    "question": "Given a list of integers `nums`, consider a list of all possible subarrays. Return the length of the shortest subarray whose sum is equal to or greater than a given integer `target`. If no such subarray exists, return 0.",
+    "solution": "def min_subarray_len(target, nums):\n    \"\"\"\n    Returns the length of the shortest subarray whose sum is equal to or greater than target.\n    If no such subarray exists, return 0.\n    \"\"\"\n    n = len(nums)\n    min_length = float('inf')\n    current_sum = 0\n    start = 0\n\n    for end in range(n):\n        current_sum += nums[end]\n        while current_sum >= target:\n            min_length = min(min_length, end - start + 1)\n            current_sum -= nums[start]\n            start += 1\n\n    return 0 if min_length == float('inf') else min_length",
+    "test": "from solution import min_subarray_len\n\ndef test_min_subarray_len_case_1():\n    assert min_subarray_len(7, [2,3,1,2,4,3]) == 2\n\ndef test_min_subarray_len_case_2():\n    assert min_subarray_len(4, [1,4,4]) == 1\n\ndef test_min_subarray_len_case_3():\n    assert min_subarray_len(11, [1,1,1,1,1,1,1,1]) == 0\n\ndef test_min_subarray_len_case_4():\n    assert min_subarray_len(15, [1,2,3,4,5]) == 5\n\ndef test_min_subarray_len_case_5():\n    assert min_subarray_len(5, [1,1,1,1,5]) == 1",
+    "test_info": [
+      {
+        "docstring": "Returns the length of the shortest subarray whose sum is equal to or greater than target.\nIf no such subarray exists, return 0.",
+        "function_declaration": "def min_subarray_len(target, nums):",
+        "function_name": "min_subarray_len",
+        "parameter_list": "(target, nums)"
+      }
+    ],
+    "gpt_pass_sequence": [
+      0,
+      1,
+      0,
+      1,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "gpt_pass_trial_num": 2,
+    "gpt_difficulty": "hard",
+    "gpt_pass_percentage": 0.2,
+    "trials": {
+      "trial_gpt4o_0": {
+        "file_source": "CodeGen_instruction_50000_combined_sanitized_prepared_0_results_combined.jsonl",
+        "solution_code": "def min_subarray_length(nums, target):\n    \"\"\"\n    Returns the length of the shortest subarray whose sum is equal to or greater than target.\n    If no such subarray exists, returns 0.\n    \"\"\"\n    n = len(nums)\n    shortest_length = float('inf')\n    current_sum = 0\n    left = 0\n\n    for right in range(n):\n        current_sum += nums[right]\n        while current_sum >= target:\n            shortest_length = min(shortest_length, right - left + 1)\n            current_sum -= nums[left]\n            left += 1\n\n    return shortest_length if shortest_length != float('inf') else 0",
+        "test_code": "from solution import min_subarray_length\n\ndef test_min_subarray_no_target():\n    assert min_subarray_length([1, 2, 3, 4], 15) == 0\n\ndef test_min_subarray_single_element():\n    assert min_subarray_length([1, 2, 3, 4], 4) == 1\n    assert min_subarray_length([4, 1, 1, 1], 4) == 1\n    assert min_subarray_length([1, 4, 1, 1], 4) == 1\n    \ndef test_min_subarray_multiple_elements():\n    assert min_subarray_length([2, 3, 1, 2, 4, 3], 7) == 2\n    assert min_subarray_length([2, 1, 4, 3, 3, 1, 2], 8) == 2\n    assert min_subarray_length([1, 2, 1, 1, 1, 1, 2], 5) == 4\n\ndef test_min_subarray_exact_target():\n    assert min_subarray_length([1, 1, 1, 1], 4) == 4\n    assert min_subarray_length([1, 1, 1, 1], 3) == 3\n\ndef test_min_subarray_empty():\n    assert min_subarray_length([], 3) == 0\n\ndef test_min_subarray_large_numbers():\n    assert min_subarray_length([100000, 200000, 300000, 400000], 500000) == 2\n    assert min_subarray_length([3, 3, 3, 3, 3], 9) == 3\n    assert min_subarray_length([5, 1, 3, 5, 2, 3, 4, 1], 8) == 2",
+        "test_coverage": null,
+        "test_result": "Fail"
+      },
+      "trial_gpt4o_1": {
+        "file_source": "CodeGen_instruction_50000_combined_sanitized_prepared_1_results_combined.jsonl",
+        "solution_code": "def shortest_subarray_with_sum_at_least_k(nums, target):\n    \"\"\"\n    Returns the length of the shortest subarray whose sum is equal to or greater than the target.\n    If no such subarray exists, returns 0.\n    \"\"\"\n    from collections import deque\n    import sys\n    \n    N = len(nums)\n    prefix_sum = [0] * (N + 1)\n    \n    for i in range(N):\n        prefix_sum[i + 1] = prefix_sum[i] + nums[i]\n    \n    result = sys.maxsize\n    deque_indices = deque()\n    \n    for i in range(N + 1):\n        while deque_indices and prefix_sum[i] - prefix_sum[deque_indices[0]] >= target:\n            result = min(result, i - deque_indices.popleft())\n        while deque_indices and prefix_sum[i] <= prefix_sum[deque_indices[-1]]:\n            deque_indices.pop()\n        deque_indices.append(i)\n    \n    return result if result != sys.maxsize else 0",
+        "test_code": "from solution import shortest_subarray_with_sum_at_least_k\n\ndef test_shortest_subarray_with_sum_at_least_k():\n    assert shortest_subarray_with_sum_at_least_k([2, 3, 1, 2, 4, 3], 7) == 2, \"Test case 1 failed\"\n    assert shortest_subarray_with_sum_at_least_k([1, 4, 4], 4) == 1, \"Test case 2 failed\"\n    assert shortest_subarray_with_sum_at_least_k([1, 1, 1, 1, 1, 1, 1, 1], 11) == 0, \"Test case 3 failed\"\n    assert shortest_subarray_with_sum_at_least_k([1, 2, 3, 4, 5], 5) == 1, \"Test case 4 failed\"\n    assert shortest_subarray_with_sum_at_least_k([5, 1, 3, 5, 10, 7, 4, 9, 2], 15) == 2, \"Test case 5 failed\"\n\ndef test_shortest_subarray_with_sum_at_least_k_edge_cases():\n    assert shortest_subarray_with_sum_at_least_k([], 1) == 0, \"Test case 6 failed\"\n    assert shortest_subarray_with_sum_at_least_k([1], 2) == 0, \"Test case 7 failed\"\n    assert shortest_subarray_with_sum_at_least_k([1], 1) == 1, \"Test case 8 failed\"\n    assert shortest_subarray_with_sum_at_least_k([10, 2, -2, 3], 10) == 1, \"Test case 9 failed\"\n    assert shortest_subarray_with_sum_at_least_k([5,6], 11) == 2, \"Test case 10 failed\"",
+        "test_coverage": 100.0,
+        "test_result": "Pass"
+      },
+      "trial_gpt4o_2": {
+        "file_source": "CodeGen_instruction_50000_combined_sanitized_prepared_2_results_combined.jsonl",
+        "solution_code": "def min_subarray_len(target, nums):\n    \"\"\"\n    Returns the length of the shortest subarray whose sum is equal to or greater than target.\n    If no such subarray exists, return 0.\n    \"\"\"\n    n = len(nums)\n    min_length = float('inf')\n    left = 0\n    current_sum = 0\n    \n    for right in range(n):\n        current_sum += nums[right]\n        \n        while current_sum >= target:\n            min_length = min(min_length, right - left + 1)\n            current_sum -= nums[left]\n            left += 1\n    \n    return min_length if min_length != float('inf') else 0",
+        "test_code": "from solution import min_subarray_len\n\ndef test_no_valid_subarray():\n    assert min_subarray_len(100, [1, 2, 3, 4, 5]) == 0\n\ndef test_single_element_subarray():\n    assert min_subarray_len(5, [5, 1, 2, 3]) == 1\n\ndef test_multiple_elements_subarray():\n    assert min_subarray_len(7, [2, 1, 5, 2, 3, 2]) == 1  # subarray [7]\n    assert min_subarray_len(8, [2, 1, 5, 2, 3, 2]) == 2  # subarray [5, 3]\n    assert min_subarray_len(5, [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]) == 5\n\ndef test_entire_array_sum():\n    assert min_subarray_len(15, [1, 2, 3, 4, 5]) == 5\n\ndef test_min_length_subarray():\n    assert min_subarray_len(11, [1, 2, 3, 4, 5]) == 3  # subarray [3, 4, 5]",
+        "test_coverage": null,
+        "test_result": "Fail"
+      },
+      "trial_gpt4o_3": {
+        "file_source": "CodeGen_instruction_50000_combined_sanitized_prepared_3_results_combined.jsonl",
+        "solution_code": "def min_subarray_len(target, nums):\n    \"\"\"\n    Returns the length of the shortest subarray whose sum is equal to or greater than target.\n    If no such subarray exists, return 0.\n    \"\"\"\n    n = len(nums)\n    min_length = float('inf')\n    current_sum = 0\n    start = 0\n\n    for end in range(n):\n        current_sum += nums[end]\n        while current_sum >= target:\n            min_length = min(min_length, end - start + 1)\n            current_sum -= nums[start]\n            start += 1\n\n    return 0 if min_length == float('inf') else min_length",
+        "test_code": "from solution import min_subarray_len\n\ndef test_min_subarray_len_case_1():\n    assert min_subarray_len(7, [2,3,1,2,4,3]) == 2\n\ndef test_min_subarray_len_case_2():\n    assert min_subarray_len(4, [1,4,4]) == 1\n\ndef test_min_subarray_len_case_3():\n    assert min_subarray_len(11, [1,1,1,1,1,1,1,1]) == 0\n\ndef test_min_subarray_len_case_4():\n    assert min_subarray_len(15, [1,2,3,4,5]) == 5\n\ndef test_min_subarray_len_case_5():\n    assert min_subarray_len(5, [1,1,1,1,5]) == 1",
+        "test_coverage": 100.0,
+        "test_result": "Pass"
+      },
+      "trial_gpt4o_4": {
+        "file_source": "CodeGen_instruction_50000_combined_sanitized_prepared_4_results_combined.jsonl",
+        "solution_code": "def min_subarray_len(target, nums):\n    \"\"\"\n    Returns the length of the shortest subarray whose sum is equal to or greater than the target.\n    If no such subarray exists, returns 0.\n    \"\"\"\n    n = len(nums)\n    min_length = float('inf')\n    current_sum = 0\n    start = 0\n    \n    for end in range(n):\n        current_sum += nums[end]\n        \n        while current_sum >= target:\n            min_length = min(min_length, end - start + 1)\n            current_sum -= nums[start]\n            start += 1\n            \n    return 0 if min_length == float('inf') else min_length",
+        "test_code": "from solution import min_subarray_len\n\ndef test_no_valid_subarray():\n    assert min_subarray_len(15, [1, 2, 3, 4, 5]) == 0\n\ndef test_example_case():\n    assert min_subarray_len(7, [2,3,1,2,4,3]) == 2\n\ndef test_single_element_equals_target():\n    assert min_subarray_len(4, [1, 2, 4, 1, 1, 1]) == 1\n\ndef test_entire_array_is_required():\n    assert min_subarray_len(10, [2, 3, 2, 1, 1, 1]) == 0\n\ndef test_target_is_zero():\n    assert min_subarray_len(0, [1, 2, 3, 4]) == 1\n\ndef test_all_elements_in_subarray():\n    assert min_subarray_len(4, [1, 4, 4]) == 1\n\ndef test_large_numbers():\n    assert min_subarray_len(100, [50, 100, 1, 2, 3]) == 1",
+        "test_coverage": null,
+        "test_result": "Fail"
+      },
+      "trial_gpt4o_5": {
+        "file_source": "CodeGen_instruction_50000_combined_sanitized_prepared_5_results_combined.jsonl",
+        "solution_code": "def min_subarray_len(target, nums):\n    \"\"\"\n    Returns the length of the shortest subarray whose sum is equal to or greater than the target.\n    \"\"\"\n    n = len(nums)\n    min_length = float('inf')\n    current_sum = 0\n    start = 0\n    \n    for end in range(n):\n        current_sum += nums[end]\n        \n        while current_sum >= target:\n            min_length = min(min_length, end - start + 1)\n            current_sum -= nums[start]\n            start += 1\n    \n    return min_length if min_length != float('inf') else 0",
+        "test_code": "from solution import min_subarray_len\n\ndef test_min_subarray_len_no_solution():\n    assert min_subarray_len(7, [1, 1, 1, 1, 1]) == 0\n\ndef test_min_subarray_len_exact_sum():\n    assert min_subarray_len(5, [1, 2, 3, 4, 5]) == 2\n\ndef test_min_subarray_len_larger_sum():\n    assert min_subarray_len(15, [1, 2, 3, 4, 5, 4]) == 3\n\ndef test_min_subarray_len_first_element():\n    assert min_subarray_len(4, [4, 2, 3, 1]) == 1\n\ndef test_min_subarray_len_subarray_middle():\n    assert min_subarray_len(7, [2, 3, 1, 2, 4, 3]) == 2",
+        "test_coverage": null,
+        "test_result": "Fail"
+      },
+      "trial_gpt4o_6": {
+        "file_source": "CodeGen_instruction_50000_combined_sanitized_prepared_6_results_combined.jsonl",
+        "solution_code": "def min_subarray_len(target, nums):\n    \"\"\"\n    Given a list of integers `nums`, return the length of the shortest subarray\n    whose sum is equal to or greater than `target`. If no such subarray exists,\n    return 0.\n    \"\"\"\n    n = len(nums)\n    min_length = float('inf')\n    current_sum = 0\n    left = 0\n    \n    for right in range(n):\n        current_sum += nums[right]\n        while current_sum >= target:\n            min_length = min(min_length, right - left + 1)\n            current_sum -= nums[left]\n            left += 1\n            \n    return min_length if min_length != float('inf') else 0",
+        "test_code": "from solution import min_subarray_len\n\ndef test_min_subarray_len_existing_solution():\n    assert min_subarray_len(7, [2,3,1,2,4,3]) == 2\n\ndef test_min_subarray_len_no_solution():\n    assert min_subarray_len(100, [1, 2, 3, 4, 5]) == 0\n\ndef test_min_subarray_len_whole_array_solution():\n    assert min_subarray_len(15, [1, 2, 3, 4, 5]) == 5\n\ndef test_min_subarray_len_single_element():\n    assert min_subarray_len(4, [4]) == 1\n    assert min_subarray_len(5, [4]) == 0\n\ndef test_min_subarray_len_multiple_solutions():\n    assert min_subarray_len(11, [1, 2, 3, 4, 5, 6]) == 2\n    assert min_subarray_len(8, [1, 4, 4]) == 2\n\ndef test_min_subarray_len_large_array():\n    nums = list(range(1, 10001)) # large array to test performance\n    assert min_subarray_len(50005000, nums) == 10000  # sum of 1 to 10000 is 50005000\n\ndef test_min_subarray_len_empty_array():\n    assert min_subarray_len(3, []) == 0\n\ndef test_min_subarray_len_zero_target():\n    assert min_subarray_len(0, [1, 2, 3]) == 1",
+        "test_coverage": null,
+        "test_result": "Fail"
+      },
+      "trial_gpt4o_7": {
+        "file_source": "CodeGen_instruction_50000_combined_sanitized_prepared_7_results_combined.jsonl",
+        "solution_code": "def min_subarray_len(target, nums):\n    \"\"\"\n    Returns the length of the shortest subarray whose sum is equal to or greater than the target.\n    If no such subarray exists, return 0.\n    \"\"\"\n    n = len(nums)\n    min_length = float('inf')  # Initialize to a large number\n    left = 0\n    current_sum = 0\n    \n    for right in range(n):\n        current_sum += nums[right]\n        \n        while current_sum >= target:\n            min_length = min(min_length, right - left + 1)\n            current_sum -= nums[left]\n            left += 1\n    \n    return min_length if min_length != float('inf') else 0",
+        "test_code": "from solution import min_subarray_len\n\ndef test_min_subarray_len_exists():\n    assert min_subarray_len(7, [2, 3, 1, 2, 4, 3]) == 2\n    assert min_subarray_len(15, [1, 2, 3, 4, 5]) == 5\n    assert min_subarray_len(4, [1, 4, 4]) == 1\n\ndef test_min_subarray_len_no_subarray():\n    assert min_subarray_len(100, [1, 2, 3, 4, 5]) == 0\n\ndef test_min_subarray_len_edge_cases():\n    assert min_subarray_len(1, [1]) == 1\n    assert min_subarray_len(0, [1, 2, 3, 4]) == 1\n    assert min_subarray_len(11, [1, 2, 3, 4, 5]) == 3\n\ndef test_min_subarray_len_multiple_subarrays():\n    assert min_subarray_len(7, [2, 3, 1, 2, 4, 3]) == 2\n    assert min_subarray_len(8, [2, 1, 2, 3, 4, 1]) == 2\n    assert min_subarray_len(5, [2, 3, 1, 5, 1, 2]) == 1",
+        "test_coverage": null,
+        "test_result": "Fail"
+      },
+      "trial_gpt4o_8": {
+        "file_source": "CodeGen_instruction_50000_combined_sanitized_prepared_8_results_combined.jsonl",
+        "solution_code": "def shortest_subarray_sum(nums, target):\n    \"\"\"\n    Returns the length of the shortest subarray whose sum is equal to or greater than the target.\n    \"\"\"\n    from collections import deque\n\n    n = len(nums)\n    prefix_sum = [0] * (n + 1)\n    \n    for i in range(1, n + 1):\n        prefix_sum[i] = prefix_sum[i - 1] + nums[i - 1]\n\n    deq = deque()\n    min_length = float('inf')\n\n    for i in range(n + 1):\n        while deq and prefix_sum[i] - prefix_sum[deq[0]] >= target:\n            min_length = min(min_length, i - deq.popleft())\n        \n        while deq and prefix_sum[i] <= prefix_sum[deq[-1]]:\n            deq.pop()\n        \n        deq.append(i)\n\n    return min_length if min_length != float('inf') else 0",
+        "test_code": "from solution import shortest_subarray_sum\n\ndef test_shortest_subarray_sum_basic():\n    assert shortest_subarray_sum([1,1,1,1,1,1,1,1], 3) == 3\n    assert shortest_subarray_sum([1,2,3,4,5], 11) == 3\n\ndef test_shortest_subarray_sum_no_such_subarray():\n    assert shortest_subarray_sum([1, 2, 3], 10) == 0\n\ndef test_shortest_subarray_sum_entire_array():\n    assert shortest_subarray_sum([1, 2, 3, 4], 10) == 0\n\ndef test_shortest_subarray_sum_single_element_match():\n    assert shortest_subarray_sum([10, 5, 2], 10) == 1\n\ndef test_shortest_subarray_sum_multiple_options():\n    assert shortest_subarray_sum([3, 1, 4, 2, 5], 7) == 2",
+        "test_coverage": null,
+        "test_result": "Fail"
+      },
+      "trial_gpt4o_9": {
+        "file_source": "CodeGen_instruction_50000_combined_sanitized_prepared_9_results_combined.jsonl",
+        "solution_code": "def min_subarray_len(target, nums):\n    \"\"\"\n    Returns the length of the shortest subarray with a sum equal to or greater than the target.\n    If no such subarray exists, returns 0.\n    \"\"\"\n    n = len(nums)\n    min_length = n + 1\n    current_sum = 0\n    start = 0\n\n    for end in range(n):\n        current_sum += nums[end]\n\n        while current_sum >= target:\n            min_length = min(min_length, end - start + 1)\n            current_sum -= nums[start]\n            start += 1\n\n    return min_length if min_length <= n else 0",
+        "test_code": "from solution import min_subarray_len\n\ndef test_no_subarray_exists():\n    assert min_subarray_len(7, [1, 1, 1, 1]) == 0\n    assert min_subarray_len(100, [1, 2, 3, 4, 5]) == 0\n\ndef test_single_element_meets_target():\n    assert min_subarray_len(3, [3]) == 1\n    assert min_subarray_len(10, [2, 4, 6, 8]) == 1\n\ndef test_entire_array_sums_to_target():\n    assert min_subarray_len(15, [1, 2, 3, 4, 5]) == 5\n\ndef test_shortest_subarray():\n    assert min_subarray_len(7, [2, 3, 1, 2, 4, 3]) == 2\n    assert min_subarray_len(4, [1, 4, 4]) == 1\n    assert min_subarray_len(11, [1, 2, 3, 4, 5]) == 3\n\ndef test_large_target():\n    assert min_subarray_len(100, [10, 20, 30, 40, 50, 60, 70]) == 2\n    assert min_subarray_len(150, [10, 20, 30, 40, 50, 60, 70]) == 3\n\ndef test_empty_array():\n    assert min_subarray_len(1, []) == 0",
+        "test_coverage": null,
+        "test_result": "Fail"
+      }
+    },
+    "chosen_trial": "trial_gpt4o_3",
+    "metadata": {
+      "original_instruction": "",
+      "prompt_id": "0000000008",
+      "row_id": 8,
+      "seed_ids": "['938', '1110', '1124']"
+    },
+    "benchmark_similarity": 0.8738110661506653,
+    "benchmark_instruction": "",
+    "benchmark_task_id": "",
+    "filter_reason": ""
+  },
+  {
+    "version": "v1.0",
+    "style": "instruct",
+    "subset": "Leetcode",
+    "question_id": "Leetcode_11_I",
+    "question": "Given an array of integers `arr`, you are to form a sequence by starting from the first element and at each step moving to the next different element (i.e., an element that hasn't been visited yet in the current sequence). Your task is to find the length of the longest subsequence that can be formed following this rule. Return _the length of the longest subsequence_ of `arr` where each element in the subsequence is distinct and followed by the next different element in the original array.",
+    "solution": "def longest_distinct_subsequence(arr):\n    \"\"\"\n    Returns the length of the longest subsequence of distinct elements \n    by moving to the next different element in the array.\n    \n    Parameters:\n    arr (list): List of integers.\n\n    Returns:\n    int: Length of the longest subsequence with distinct elements.\n    \"\"\"\n    if not arr:\n        return 0\n\n    seen = set()\n    subsequence_length = 0\n\n    for num in arr:\n        if num not in seen:\n            seen.add(num)\n            subsequence_length += 1\n\n    return subsequence_length",
+    "test": "from solution import longest_distinct_subsequence\n\ndef test_longest_distinct_subsequence_empty():\n    assert longest_distinct_subsequence([]) == 0\n\ndef test_longest_distinct_subsequence_single_element():\n    assert longest_distinct_subsequence([10]) == 1\n\ndef test_longest_distinct_subsequence_all_distinct():\n    assert longest_distinct_subsequence([1, 2, 3, 4, 5]) == 5\n\ndef test_longest_distinct_subsequence_all_same():\n    assert longest_distinct_subsequence([1, 1, 1, 1]) == 1\n\ndef test_longest_distinct_subsequence_mixed():\n    assert longest_distinct_subsequence([1, 2, 2, 3, 3, 4, 5, 5]) == 5\n\ndef test_longest_distinct_subsequence_disordered():\n    assert longest_distinct_subsequence([4, 2, 2, 3, 4, 5, 1]) == 5\n\ndef test_longest_distinct_subsequence_repeated_subsequences():\n    assert longest_distinct_subsequence([1, 2, 1, 2, 1, 2]) == 2",
+    "test_info": [
+      {
+        "docstring": "Returns the length of the longest subsequence of distinct elements \nby moving to the next different element in the array.\n\nParameters:\narr (list): List of integers.\n\nReturns:\nint: Length of the longest subsequence with distinct elements.",
+        "function_declaration": "def longest_distinct_subsequence(arr):",
+        "function_name": "longest_distinct_subsequence",
+        "parameter_list": "(arr)"
+      }
+    ],
+    "gpt_pass_sequence": [
+      1,
+      1,
+      1,
+      0,
+      1,
+      1,
+      1,
+      1,
+      0,
+      1
+    ],
+    "gpt_pass_trial_num": 8,
+    "gpt_difficulty": "easy",
+    "gpt_pass_percentage": 0.8,
+    "trials": {
+      "trial_gpt4o_0": {
+        "file_source": "CodeGen_instruction_50000_combined_sanitized_prepared_0_results_combined.jsonl",
+        "solution_code": "def longest_distinct_subsequence(arr):\n    \"\"\"\n    Returns the length of the longest subsequence with distinct elements where \n    each element in the subsequence is followed by the next different one in the original array.\n    \"\"\"\n    seen = set()\n    longest_length = 0\n\n    for i in range(len(arr)):\n        if arr[i] not in seen:\n            seen.add(arr[i])\n            longest_length += 1\n\n    return longest_length",
+        "test_code": "from solution import longest_distinct_subsequence\n\ndef test_longest_distinct_subsequence():\n    assert longest_distinct_subsequence([1, 2, 2, 3, 1, 4]) == 4\n    assert longest_distinct_subsequence([1, 1, 1, 1, 1]) == 1\n    assert longest_distinct_subsequence([1, 2, 3, 4, 5]) == 5\n    assert longest_distinct_subsequence([5, 4, 3, 2, 1]) == 5\n    assert longest_distinct_subsequence([1, 3, 2, 2, 4, 4, 5, 6]) == 6\n    assert longest_distinct_subsequence([7, 6, 7, 7, 8, 7, 9]) == 4\n    assert longest_distinct_subsequence([]) == 0\n    assert longest_distinct_subsequence([10]) == 1\n    assert longest_distinct_subsequence([1, 3, 3, 9, 4, 2, 6, 7, 8, 2, 1]) == 8",
+        "test_coverage": 100.0,
+        "test_result": "Pass"
+      },
+      "trial_gpt4o_1": {
+        "file_source": "CodeGen_instruction_50000_combined_sanitized_prepared_1_results_combined.jsonl",
+        "solution_code": "def length_of_longest_subsequence(arr):\n    \"\"\"\n    Return the length of the longest subsequence where each element is distinct\n    and followed by the next different element in the original array.\n    \"\"\"\n    if not arr:\n        return 0\n\n    longest_subsequence = []\n    seen_elements = set()\n    \n    for element in arr:\n        if element not in seen_elements:\n            longest_subsequence.append(element)\n            seen_elements.add(element)\n    \n    return len(longest_subsequence)",
+        "test_code": "from solution import length_of_longest_subsequence\n\ndef test_empty_array():\n    assert length_of_longest_subsequence([]) == 0\n\ndef test_single_element_array():\n    assert length_of_longest_subsequence([1]) == 1\n\ndef test_two_different_elements():\n    assert length_of_longest_subsequence([1, 2]) == 2\n\ndef test_all_elements_same():\n    assert length_of_longest_subsequence([1, 1, 1, 1]) == 1\n\ndef test_multiple_different_elements():\n    assert length_of_longest_subsequence([1, 2, 3, 4, 5]) == 5\n\ndef test_array_with_repeated_elements():\n    assert length_of_longest_subsequence([1, 2, 2, 3, 3, 3, 4, 4, 4, 4]) == 4\n\ndef test_random_order():\n    assert length_of_longest_subsequence([4, 1, 2, 2, 3, 1]) == 4\n\ndef test_interleaved_repeats():\n    assert length_of_longest_subsequence([1, 2, 2, 3, 1, 4, 1, 5]) == 5",
+        "test_coverage": 100.0,
+        "test_result": "Pass"
+      },
+      "trial_gpt4o_2": {
+        "file_source": "CodeGen_instruction_50000_combined_sanitized_prepared_2_results_combined.jsonl",
+        "solution_code": "def longest_distinct_subsequence(arr):\n    \"\"\"\n    Returns the length of the longest subsequence of distinct elements \n    following the rule to move to the next different element in the original array.\n    \"\"\"\n    if not arr:\n        return 0\n    \n    # Store the elements we have visited in a set.\n    visited = set()\n    \n    length = 0\n    \n    for element in arr:\n        if element not in visited:\n            visited.add(element)\n            length += 1\n    \n    return length",
+        "test_code": "from solution import longest_distinct_subsequence\n\ndef test_longest_sequence_with_distinct_elements():\n    assert longest_distinct_subsequence([1, 2, 3, 4, 5]) == 5\n\ndef test_longest_sequence_with_no_distinct_elements():\n    assert longest_distinct_subsequence([1, 1, 1, 1]) == 1\n\ndef test_longest_sequence_with_some_duplicates():\n    assert longest_distinct_subsequence([1, 2, 2, 3, 4, 4, 5, 1]) == 5\n\ndef test_longest_sequence_with_all_elements_same():\n    assert longest_distinct_subsequence([7, 7, 7, 7, 7]) == 1\n\ndef test_longest_sequence_with_empty_list():\n    assert longest_distinct_subsequence([]) == 0\n\ndef test_longest_sequence_with_single_element():\n    assert longest_distinct_subsequence([42]) == 1\n\ndef test_longest_sequence_with_alternating_elements():\n    assert longest_distinct_subsequence([1, 2, 1, 2, 1, 2]) == 2",
+        "test_coverage": 100.0,
+        "test_result": "Pass"
+      },
+      "trial_gpt4o_3": {
+        "file_source": "CodeGen_instruction_50000_combined_sanitized_prepared_3_results_combined.jsonl",
+        "solution_code": "def longest_distinct_subsequence(arr):\n    \"\"\"\n    Returns the length of the longest subsequence where each element in the subsequence \n    is distinct and followed by the next different element in the original array.\n    \"\"\"\n    seen = set()\n    longest_length = 0\n    current_length = 0\n    \n    for element in arr:\n        if element not in seen:\n            seen.add(element)\n            current_length += 1\n            longest_length = max(longest_length, current_length)\n        else:\n            current_length = 1\n            seen = {element}\n    \n    return longest_length",
+        "test_code": "from solution import longest_distinct_subsequence\n\ndef test_single_element_array():\n    assert longest_distinct_subsequence([1]) == 1\n\ndef test_all_elements_distinct():\n    assert longest_distinct_subsequence([1, 2, 3, 4, 5]) == 5\n\ndef test_all_elements_same():\n    assert longest_distinct_subsequence([2, 2, 2, 2]) == 1\n\ndef test_some_elements_repeated():\n    assert longest_distinct_subsequence([1, 2, 1, 3, 2, 4, 3, 5]) == 5\n\ndef test_distinct_subsequence_in_middle():\n    assert longest_distinct_subsequence([4, 4, 1, 2, 3, 1, 4]) == 3\n\ndef test_empty_array():\n    assert longest_distinct_subsequence([]) == 0",
+        "test_coverage": null,
+        "test_result": "Fail"
+      },
+      "trial_gpt4o_4": {
+        "file_source": "CodeGen_instruction_50000_combined_sanitized_prepared_4_results_combined.jsonl",
+        "solution_code": "def longest_distinct_subsequence(arr):\n    \"\"\"\n    Given an array of integers `arr`, returns the length of the longest subsequence\n    where each element in the subsequence is distinct and followed by the next different element in the original array.\n    \"\"\"\n    seen = set()\n    length = 0\n\n    for num in arr:\n        if num not in seen:\n            seen.add(num)\n            length += 1\n\n    return length",
+        "test_code": "from solution import longest_distinct_subsequence\n\ndef test_all_distinct_elements():\n    assert longest_distinct_subsequence([1, 2, 3, 4, 5]) == 5\n\ndef test_some_duplicates():\n    assert longest_distinct_subsequence([1, 2, 2, 3, 3, 4, 5]) == 5\n\ndef test_all_same_elements():\n    assert longest_distinct_subsequence([1, 1, 1, 1, 1]) == 1\n\ndef test_empty_array():\n    assert longest_distinct_subsequence([]) == 0\n\ndef test_large_array():\n    assert longest_distinct_subsequence([i for i in range(1000)] + [999] * 1000) == 1000\n\ndef test_mixed_elements():\n    assert longest_distinct_subsequence([4, 5, 4, 6, 5, 7, 6, 7, 8, 8, 9]) == 6",
+        "test_coverage": 100.0,
+        "test_result": "Pass"
+      },
+      "trial_gpt4o_5": {
+        "file_source": "CodeGen_instruction_50000_combined_sanitized_prepared_5_results_combined.jsonl",
+        "solution_code": "def longest_distinct_subsequence(arr):\n    \"\"\"\n    Returns the length of the longest subsequence of arr where each element is distinct \n    and followed by the next different element in the original array.\n    \"\"\"\n    visited = set()\n    longest_subseq_length = 0\n    \n    for element in arr:\n        if element not in visited:\n            visited.add(element)\n            longest_subseq_length += 1\n            \n    return longest_subseq_length",
+        "test_code": "from solution import longest_distinct_subsequence\n\ndef test_single_element():\n    assert longest_distinct_subsequence([1]) == 1\n\ndef test_all_distinct_elements():\n    assert longest_distinct_subsequence([1, 2, 3, 4, 5]) == 5\n\ndef test_all_same_elements():\n    assert longest_distinct_subsequence([1, 1, 1, 1, 1]) == 1\n\ndef test_mixed_elements():\n    assert longest_distinct_subsequence([1, 2, 2, 3, 4, 4, 5]) == 5\n\ndef test_alternating_elements():\n    assert longest_distinct_subsequence([1, 2, 1, 2, 1, 2, 1]) == 2\n\ndef test_empty_array():\n    assert longest_distinct_subsequence([]) == 0\n    \ndef test_duplicate_with_gap():\n    assert longest_distinct_subsequence([1, 2, 3, 1, 4, 5, 6]) == 6",
+        "test_coverage": 100.0,
+        "test_result": "Pass"
+      },
+      "trial_gpt4o_6": {
+        "file_source": "CodeGen_instruction_50000_combined_sanitized_prepared_6_results_combined.jsonl",
+        "solution_code": "def longest_distinct_subsequence(arr):\n    \"\"\"\n    Returns the length of the longest distinct subsequence\n    that can be formed where each element is followed by\n    the next different element in the original array.\n    \"\"\"\n    if not arr:\n        return 0\n\n    visited = set()\n    length = 0\n    \n    for element in arr:\n        if element not in visited:\n            visited.add(element)\n            length += 1\n            \n    return length",
+        "test_code": "from solution import longest_distinct_subsequence\n\ndef test_longest_distinct_subsequence():\n    assert longest_distinct_subsequence([1, 2, 3, 4, 5]) == 5\n    assert longest_distinct_subsequence([1, 2, 2, 3, 4, 4, 5]) == 5\n    assert longest_distinct_subsequence([1, 1, 1, 1]) == 1\n    assert longest_distinct_subsequence([5, 4, 3, 2, 1, 3, 2, 1]) == 5\n    assert longest_distinct_subsequence([]) == 0\n    assert longest_distinct_subsequence([7]) == 1\n    assert longest_distinct_subsequence([2, 4, 6, 8, 4, 2, 8]) == 4",
+        "test_coverage": 100.0,
+        "test_result": "Pass"
+      },
+      "trial_gpt4o_7": {
+        "file_source": "CodeGen_instruction_50000_combined_sanitized_prepared_7_results_combined.jsonl",
+        "solution_code": "def longest_distinct_subsequence(arr):\n    \"\"\"\n    Returns the length of the longest subsequence of distinct elements\n    in the given array where each element in the subsequence is followed\n    by the next different element in the original array.\n    \"\"\"\n    if not arr:\n        return 0\n\n    seen = set()\n    length = 0\n\n    for i in arr:\n        if i not in seen:\n            seen.add(i)\n            length += 1\n\n    return length",
+        "test_code": "from solution import longest_distinct_subsequence\n\ndef test_longest_distinct_subsequence_empty_list():\n    assert longest_distinct_subsequence([]) == 0\n\ndef test_longest_distinct_subsequence_single_element():\n    assert longest_distinct_subsequence([1]) == 1\n\ndef test_longest_distinct_subsequence_all_distinct():\n    assert longest_distinct_subsequence([1, 2, 3, 4, 5]) == 5\n\ndef test_longest_distinct_subsequence_all_same():\n    assert longest_distinct_subsequence([1, 1, 1, 1]) == 1\n\ndef test_longest_distinct_subsequence_mixed():\n    assert longest_distinct_subsequence([1, 2, 2, 3, 3, 3, 4]) == 4\n\ndef test_longest_distinct_subsequence_with_negatives():\n    assert longest_distinct_subsequence([-1, -2, -3, -4, -1, -2, -3, -4]) == 4",
+        "test_coverage": 100.0,
+        "test_result": "Pass"
+      },
+      "trial_gpt4o_8": {
+        "file_source": "CodeGen_instruction_50000_combined_sanitized_prepared_8_results_combined.jsonl",
+        "solution_code": "def longest_distinct_subsequence(arr):\n    \"\"\"\n    Returns the length of the longest subsequence of arr where each element\n    in the subsequence is distinct and followed by the next different element\n    in the original array.\n    \"\"\"\n    if not arr:\n        return 0\n\n    distinct_elements = set()\n    longest_length = 0\n    current_length = 0\n\n    for element in arr:\n        if element not in distinct_elements:\n            distinct_elements.add(element)\n            current_length += 1\n            longest_length = max(longest_length, current_length)\n        else:\n            current_length = 1\n            distinct_elements = {element}\n\n    return longest_length",
+        "test_code": "def test_no_elements():\n    assert longest_distinct_subsequence([]) == 0\n\ndef test_all_distinct_elements():\n    assert longest_distinct_subsequence([1, 2, 3, 4, 5]) == 5\n\ndef test_all_same_elements():\n    assert longest_distinct_subsequence([1, 1, 1, 1]) == 1\n\ndef test_mixed_elements():\n    assert longest_distinct_subsequence([1, 2, 1, 3, 2, 4]) == 4\n\ndef test_single_element():\n    assert longest_distinct_subsequence([5]) == 1\n\ndef test_duplicate_at_different_positions():\n    assert longest_distinct_subsequence([1, 2, 3, 1, 4, 5, 6]) == 6\n\ndef test_sequential_elements():\n    assert longest_distinct_subsequence([1, 2, 3, 1, 2, 3, 1]) == 3",
+        "test_coverage": null,
+        "test_result": "Fail"
+      },
+      "trial_gpt4o_9": {
+        "file_source": "CodeGen_instruction_50000_combined_sanitized_prepared_9_results_combined.jsonl",
+        "solution_code": "def longest_distinct_subsequence(arr):\n    \"\"\"\n    Returns the length of the longest subsequence of distinct elements \n    by moving to the next different element in the array.\n    \n    Parameters:\n    arr (list): List of integers.\n\n    Returns:\n    int: Length of the longest subsequence with distinct elements.\n    \"\"\"\n    if not arr:\n        return 0\n\n    seen = set()\n    subsequence_length = 0\n\n    for num in arr:\n        if num not in seen:\n            seen.add(num)\n            subsequence_length += 1\n\n    return subsequence_length",
+        "test_code": "from solution import longest_distinct_subsequence\n\ndef test_longest_distinct_subsequence_empty():\n    assert longest_distinct_subsequence([]) == 0\n\ndef test_longest_distinct_subsequence_single_element():\n    assert longest_distinct_subsequence([10]) == 1\n\ndef test_longest_distinct_subsequence_all_distinct():\n    assert longest_distinct_subsequence([1, 2, 3, 4, 5]) == 5\n\ndef test_longest_distinct_subsequence_all_same():\n    assert longest_distinct_subsequence([1, 1, 1, 1]) == 1\n\ndef test_longest_distinct_subsequence_mixed():\n    assert longest_distinct_subsequence([1, 2, 2, 3, 3, 4, 5, 5]) == 5\n\ndef test_longest_distinct_subsequence_disordered():\n    assert longest_distinct_subsequence([4, 2, 2, 3, 4, 5, 1]) == 5\n\ndef test_longest_distinct_subsequence_repeated_subsequences():\n    assert longest_distinct_subsequence([1, 2, 1, 2, 1, 2]) == 2",
+        "test_coverage": 100.0,
+        "test_result": "Pass"
+      }
+    },
+    "chosen_trial": "trial_gpt4o_9",
+    "metadata": {
+      "original_instruction": "",
+      "prompt_id": "0000000011",
+      "row_id": 11,
+      "seed_ids": "['2272', '1461', '1547']"
+    },
+    "benchmark_similarity": 0.8032618165016174,
+    "benchmark_instruction": "",
+    "benchmark_task_id": "",
+    "filter_reason": ""
+  }
+]

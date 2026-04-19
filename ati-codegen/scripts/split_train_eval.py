@@ -11,7 +11,7 @@ from typing import List, Dict, Any
 
 # ==================== 配置 ====================
 # 默认路径
-DEFAULT_INPUT = "data/raw/KodCode.jsonl"
+DEFAULT_INPUT = "data/raw/KodCode_annotate.jsonl"
 DEFAULT_TRAIN_OUTPUT = "data/processed/KodCode_train.jsonl"
 DEFAULT_EVAL_OUTPUT = "data/processed/KodCode_eval.jsonl"
 

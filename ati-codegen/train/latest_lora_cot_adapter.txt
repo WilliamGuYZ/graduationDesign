@@ -1,0 +1,1 @@
+/home/ubuntu/yejunyin/graduationDesign/ati-codegen/train/outputs/qwen_lora_cot_20260415_093319/lora_adapter
