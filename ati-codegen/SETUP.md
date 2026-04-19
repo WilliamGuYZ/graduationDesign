@@ -15,41 +15,33 @@
 ```text
 ati-codegen/
 ├── data/
-│   ├── raw/
-│   │   ├── KodCode.parquet            # 原始 KodCode Parquet
-│   │   ├── KodCode.jsonl              # Parquet 转换并单测校验后（脚本生成）
-│   │   ├── KodCode_with_thought.jsonl # 可选：annotate_thought_steps 输出
-│   │   └── KodCode_annotate.jsonl     # 可选：annotate_algorithm_tags 输出（划分脚本默认输入）
-│   └── processed/
-│       ├── KodCode_train.jsonl        # 训练集（划分脚本生成）
-│       └── KodCode_eval.jsonl         # 评测集
-├── scripts/
-│   ├── convet_KodCode_to_jsonl.py
-│   ├── validate_code_with_test.py
-│   ├── split_train_eval.py
-│   ├── annotate_thought_steps.py       # 可选 API 标注
-│   ├── annotate_algorithm_tags.py      # 可选 API 标注
-│   ├── check_max_seq_length.py / check_cot_seq_length.py / check_KodCode_sample.py
-│   └── train_eval.sh
-├── train/
-│   ├── train.py
-│   ├── train_cot.py                   # CoT 版 LoRA
-│   ├── latest_lora_adapter.txt
-│   ├── latest_lora_cot_adapter.txt    # CoT 训练后写入，供 eval_lora_cot 使用
-│   └── outputs/
-├── evaluation/
-│   ├── eval_base_passk.py
-│   ├── eval_lora_passk.py
-│   ├── eval_lora_cot_passk.py         # CoT 评测
-│   └── results/                       # 脚本写入 *.json（非 .txt）
-│       ├── eval_base_passk.json
-│       ├── eval_lora_passk.json
-│       └── eval_lora_cot_passk.json
-├── models/
+│   ├── raw/                           # 原始数据
+│   │   ├── KodCode.parquet            #   KodCode 原始 Parquet
+│   │   ├── KodCode.jsonl              #   转换并验证后的 JSONL
+│   │   └── mbpp.jsonl                 #   MBPP 数据集（备用）
+│   └── processed/                     # 处理后数据
+│       ├── KodCode_train.jsonl        #   训练集（90%）
+│       └── KodCode_eval.jsonl         #   评测集（10%）
+├── scripts/                           # 数据处理与工具脚本
+│   ├── convet_KodCode_to_jsonl.py     #   Parquet → JSONL + 代码验证
+│   ├── split_train_eval.py            #   训练/评测集划分
+│   ├── check_max_seq_length.py        #   Token 长度统计
+│   ├── validate_code_with_test.py     #   代码正确性验证
+│   └── train_eval.sh                  #   一键全流程脚本
+├── train/                             # 训练相关
+│   ├── train.py                       #   LoRA 微调主脚本
+│   ├── latest_lora_adapter.txt        #   最新适配器路径指针
+│   └── outputs/                       #   训练输出（.gitignore 排除）
+├── evaluation/                        # 评测相关
+│   ├── eval_base_passk.py             #   基座模型 pass@k 评测
+│   ├── eval_lora_passk.py             #   LoRA 模型 pass@k 评测
+│   └── results/                       #   评测结果
+│       ├── eval_base_passk.txt
+│       └── eval_lora_passk.txt
+├── models/                            # 本地模型权重（.gitignore 排除）
 │   └── Qwen2.5-Coder-7B-Instruct/
 ├── requirements.txt
-├── README.md
-└── SETUP.md
+└── README.md
 ```
 
 ---
@@ -306,18 +298,19 @@ conda config --add pkgs_dirs ~/yejunyin/conda-pkgs
 cd ~/yejunyin/graduationDesign/ati-codegen
 conda activate ~/yejunyin/conda-envs/qwen-coder
 
-# 1）pip 使用国内镜像（按需）
+# 1）pip 使用国内镜像（与 requirements.txt 注释一致）
 pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/
 pip config set global.trusted-host mirrors.aliyun.com
 pip install --upgrade pip -i https://mirrors.aliyun.com/pypi/simple/ --trusted-host mirrors.aliyun.com
 
-# 2）安装依赖：本仓库 requirements.txt 为完整 pip freeze，其中 PyTorch 为 torch==2.10.0+cu130 等，
-#    需能解析 PyTorch 官方 CUDA 轮子（通常为 cu130 额外索引，见 https://pytorch.org/get-started/locally/）。
-#    若先手动装了其他 CUDA 版本的 torch，再 pip install -r 可能被覆盖为 freeze 中的版本。
+# 2）先安装 PyTorch（CUDA 版本需与服务器驱动匹配；以下为 requirements.txt 中的 cu121 示例）
+pip install torch==2.5.0 torchvision==0.20.0 torchaudio==2.5.0 --index-url https://download.pytorch.org/whl/cu121
+
+# 3）其余依赖一键安装
 pip install -r requirements.txt
 ```
 
-若服务器驱动与 **`+cu130`** 轮子不匹配，不要硬套下文旧示例；请以 **`nvidia-smi`、PyTorch / vLLM 文档** 为准调整 `requirements.txt` 中的 torch 行或改用你机器可用的 wheel；旧文档里曾写的 **`cu121` + torch 2.5.x** 与本仓库当前冻结文件**不一致**，仅作「先装 torch 再装其余」的一般思路参考。
+若服务器 CUDA / 驱动与 `cu121`  wheel 不匹配，请根据 `nvidia-smi` 与 PyTorch 官网说明改用 `cu118` 等对应命令，再执行 `pip install -r requirements.txt`。
 
 安装完成后可在服务器上验证：
 
@@ -386,8 +379,6 @@ head -n 1 data/raw/KodCode.jsonl
 # 若首行为 Git LFS 指针，在仓库根目录执行：git lfs pull
 
 python3 scripts/convet_KodCode_to_jsonl.py   # 仅当需从 Parquet 生成 JSONL 时，耗时可较长
-# 划分脚本默认读 data/raw/KodCode_annotate.jsonl；若尚无比文件、只有 KodCode.jsonl，请加例如：
-#   python3 scripts/split_train_eval.py --ratio 0.9 --no-shuffle --input data/raw/KodCode.jsonl
 python3 scripts/split_train_eval.py --ratio 0.9 --no-shuffle
 ```
 
@@ -407,15 +398,13 @@ bash scripts/train_eval.sh
 python3 train/train.py
 python3 evaluation/eval_base_passk.py
 python3 evaluation/eval_lora_passk.py
-# CoT 实验：python3 train/train_cot.py 后运行 python3 evaluation/eval_lora_cot_passk.py
 ```
 
 #### 查看结果
 
 ```bash
-cat evaluation/results/eval_base_passk.json
-cat evaluation/results/eval_lora_passk.json
-# CoT 评测若运行过：cat evaluation/results/eval_lora_cot_passk.json
+cat evaluation/results/eval_base_passk.txt
+cat evaluation/results/eval_lora_passk.txt
 # TensorBoard（可选）：tensorboard --logdir train/outputs/ --bind_all
 # 从本机浏览器访问时，需通过 SSH 隧道或在服务器侧放行对应端口（如 6006）
 ```
@@ -426,8 +415,8 @@ cat evaluation/results/eval_lora_passk.json
 
 ```bash
 mkdir -p evaluation/results train/outputs
-scp -P 23822 ubuntu@116.172.94.6:~/yejunyin/graduationDesign/ati-codegen/evaluation/results/*.json ./evaluation/results/
-scp -r -P 23822 ubuntu@116.172.94.6:~/yejunyin/graduationDesign/ati-codegen/train/outputs/ ./train/
+scp -P 8552 ubuntu@116.172.94.6:~/yejunyin/graduationDesign/ati-codegen/evaluation/results/*.txt ./evaluation/results/
+scp -r -P 8552 ubuntu@116.172.94.6:~/yejunyin/graduationDesign/ati-codegen/train/outputs/ ./train/
 ```
 
 ---
@@ -495,7 +484,7 @@ scp -r -P 23822 ubuntu@116.172.94.6:~/yejunyin/graduationDesign/ati-codegen/trai
 | **pass@10** | 77.70% | 88.70%   | +11.00% |
 
 
-> 参数：每题采样 10 次（见评测脚本内 `NUM_SAMPLES`），temperature 与脚本内 `TEMPERATURE` 一致（当前为 **0.3**），子进程执行超时 5 秒。
+> 参数：每题采样 10 次，temperature=0.7，子进程执行超时 5 秒。
 
 ---
 
@@ -521,7 +510,7 @@ A: 可以。Windows 10 1809+ 自带 OpenSSH 客户端，在 PowerShell 中执行
 A: 服务器未正确安装 NVIDIA 驱动，或当前无 GPU。在 Ubuntu 上可尝试：`sudo apt update && sudo apt install -y nvidia-driver-535`，然后 `sudo reboot`，再重新登录后执行 `nvidia-smi`。具体以机房/云厂商文档为准。
 
 **Q: `torch.cuda.is_available()` 返回 `False`？**
-A: 多为 PyTorch 与驱动/CUDA 不匹配，或装成了 CPU 版 wheel。请按 `nvidia-smi` 显示的驱动与官方说明重装带 CUDA 的 PyTorch（例如按 PyTorch 官网选择与你驱动一致的 `--index-url`），并与 **`requirements.txt` 里实际版本**一致。
+A: 多为 PyTorch 与驱动/CUDA 不匹配，或装成了 CPU 版 wheel。请按 `nvidia-smi` 显示的驱动与官方说明重装带 CUDA 的 PyTorch（例如 `pip install torch --index-url https://download.pytorch.org/whl/cu121`），并与本文「安装依赖」及 `requirements.txt` 中的版本说明对齐。
 
 **Q: `pip install torch` / `pip install sympy` 下载很慢或超时？**
 A: 先升级 pip，并配置国内 PyPI 镜像（见上文「安装依赖」中的 `pip config set global.index-url`）。旧版 pip（如 22.x）可能仍把部分下载重定向到国外源。安装 torch 前可先 `pip install sympy networkx filelock`，再安装 PyTorch wheel。
@@ -545,8 +534,8 @@ A: 降低 `train/train.py` 中的 `BATCH_SIZE`（如从 4 降为 2），同时�
 **Q: 评测时 OOM？**
 A: 降低评测脚本中的 `GPU_MEMORY_UTILIZATION`（如从 0.9 降为 0.7）和 `VLLM_MAX_MODEL_LEN`（如从 2048 降为 1024）。
 
-**Q: `latest_lora_adapter.txt` / `latest_lora_cot_adapter.txt` 路径不对？**
-A: 训练完成后由脚本写入，内容为 adapter 目录路径。移动项目目录后若路径失效，应手动改成新路径或重新训练对应 `train.py` / `train_cot.py`。
+**Q: `latest_lora_adapter.txt` 路径不对？**
+A: 该文件在训练完成后自动生成，内容为 adapter 的绝对路径。如果把项目移到了新位置，需要手动修改文件内容指向正确路径，或重新训练。
 
 **Q: 额外数据盘没有自动挂载？**
 A: 云主机或实验室机器若挂了第二块盘，通常需要在系统里手动分区、`mkfs`、`mount` 并写入 `/etc/fstab`。挂载后可将大文件（模型、数据集）放在该盘上，并在项目 `models/` 下用软链接指向。

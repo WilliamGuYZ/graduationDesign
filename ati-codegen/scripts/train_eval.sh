@@ -16,4 +16,10 @@ python3 evaluation/eval_base_passk.py
 echo ">>> PASS@K LoRA（评测集，adapter 来自上一步）"
 python3 evaluation/eval_lora_passk.py
 
+echo ">>> CoT LoRA 训练"
+python3 train/train_cot.py
+
+echo ">>> PASS@K CoT LoRA（评测集，adapter 来自上一步）"
+python3 evaluation/eval_lora_cot_passk.py
+
 echo ">>> 全部完成"
