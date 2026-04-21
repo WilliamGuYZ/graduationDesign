@@ -1,4 +1,4 @@
-name: /home/ubuntu/yejunyin/conda-envs/qwen-coder
+name: qwen-coder
 channels:
   - https://repo.anaconda.com/pkgs/main
   - https://repo.anaconda.com/pkgs/r
