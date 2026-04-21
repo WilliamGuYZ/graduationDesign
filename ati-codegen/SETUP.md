@@ -290,30 +290,44 @@ conda config --add pkgs_dirs ~/yejunyin/conda-pkgs
 
 多人并行安装时仍可能产生锁竞争，尽量由管理员统一装好依赖，成员只做 `git pull` 与运行。
 
-#### 5. 安装依赖（一键）
+#### 5. 安装依赖（一键，可用于环境被释放后的重建）
 
-激活共享环境后，在 **`ati-codegen` 目录** 下执行以下命令即可（`requirements.txt` 已内置 PyTorch CUDA 轮子源）：
+激活共享环境后，在 **`ati-codegen` 目录** 下按下面整段命令执行（可直接复制）：
 
 ```bash
 cd ~/yejunyin/graduationDesign/ati-codegen
 conda activate ~/yejunyin/conda-envs/qwen-coder
 
-# 1）pip 使用国内镜像（与 requirements.txt 注释一致）
-pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/
-pip config set global.trusted-host mirrors.aliyun.com
-pip install --upgrade pip -i https://mirrors.aliyun.com/pypi/simple/ --trusted-host mirrors.aliyun.com
+# 1）升级 pip（官方源）
+pip install --upgrade pip
 
-# 2）一键安装全部依赖（含 torch/torchvision/torchaudio）
-pip install -r requirements.txt
-```
+# 2）安装本项目全部依赖（torch 由 vLLM 自动解析兼容版本）
+pip install -r requirements.txt -i https://pypi.org/simple
 
-若你服务器不能使用 `cu121`（如驱动过旧），请把 `requirements.txt` 第一行 `--extra-index-url` 改为对应 CUDA 源（如 `cu118`），再重新执行 `pip install -r requirements.txt`。
-
-安装完成后可在服务器上验证：
-
-```bash
+# 3）验证安装结果
 python3 -c "import torch; print(f'PyTorch {torch.__version__}, CUDA: {torch.cuda.is_available()}, GPU: {torch.cuda.get_device_name(0)}')"
 python3 -c "import vllm; print(f'vLLM {vllm.__version__}')"
+```
+
+若你服务器不能使用 `cu128`，请把 `requirements.txt` 第一行 `--extra-index-url` 改为对应 CUDA 源（如 `cu121` / `cu118`），再重新执行上面的第 3 步。
+
+若安装时发现 `pip` 仍使用历史镜像（例如 `pip install` 输出里出现 `mirrors.aliyun.com`），再执行以下清理后重试：
+
+```bash
+pip config list
+pip config unset global.index-url || true
+pip config unset global.trusted-host || true
+pip install -r requirements.txt -i https://pypi.org/simple
+```
+
+若环境已损坏或之前装过冲突版本，先清理再安装：
+
+```bash
+conda activate ~/yejunyin/conda-envs/qwen-coder
+pip uninstall -y vllm torch torchvision torchaudio xformers vllm-flash-attn
+pip cache purge
+pip install --upgrade pip
+pip install -r requirements.txt -i https://pypi.org/simple
 ```
 
 #### 6. Git 同步修改（日常开发）
@@ -331,7 +345,7 @@ git lfs pull    # 仅当大文件/LFS 指针有更新时
 
 ```bash
 conda activate ~/yejunyin/conda-envs/qwen-coder
-pip install -r requirements.txt
+pip install -r requirements.txt -i https://pypi.org/simple
 ```
 
 本地 Windows / 其他电脑修改代码后：**先 `commit` + `push` 到 GitHub**，再到服务器 **`git pull`**（大文件变更时 **`git lfs pull`**），保持与仓库一致。
@@ -359,7 +373,7 @@ cd ~/yejunyin/graduationDesign/ati-codegen
 #### 下载基座模型
 
 ```bash
-pip install modelscope
+# modelscope 已包含在 requirements.txt 中，无需单独安装
 modelscope download --model Qwen/Qwen2.5-Coder-7B-Instruct --local_dir models/Qwen2.5-Coder-7B-Instruct
 ```
 
@@ -507,13 +521,13 @@ A: 可以。Windows 10 1809+ 自带 OpenSSH 客户端，在 PowerShell 中执行
 A: 服务器未正确安装 NVIDIA 驱动，或当前无 GPU。在 Ubuntu 上可尝试：`sudo apt update && sudo apt install -y nvidia-driver-535`，然后 `sudo reboot`，再重新登录后执行 `nvidia-smi`。具体以机房/云厂商文档为准。
 
 **Q: `torch.cuda.is_available()` 返回 `False`？**
-A: 多为 PyTorch 与驱动/CUDA 不匹配，或装成了 CPU 版 wheel。请按 `nvidia-smi` 显示的驱动与官方说明重装带 CUDA 的 PyTorch（例如 `pip install torch --index-url https://download.pytorch.org/whl/cu121`），并与本文「安装依赖」及 `requirements.txt` 中的版本说明对齐。
+A: 多为 PyTorch 与驱动/CUDA 不匹配，或装成了 CPU 版 wheel。请按 `nvidia-smi` 显示的驱动与官方说明重装带 CUDA 的 PyTorch（例如 `pip install --pre torch --index-url https://download.pytorch.org/whl/nightly/cu128`），并与本文「安装依赖」及 `requirements.txt` 中的版本说明对齐。
 
 **Q: `pip install -r requirements.txt` 下载很慢或超时？**
-A: 先升级 pip，并配置国内 PyPI 镜像（见上文「安装依赖」中的 `pip config set global.index-url`）。建议固定 Python 3.11，并重试 `pip install -r requirements.txt`。
+A: 先清理 `pip` 的旧镜像配置（`pip config unset global.index-url` / `pip config unset global.trusted-host`），再用官方源重试：`pip install -r requirements.txt -i https://pypi.org/simple`。建议固定 Python 3.11。
 
 **Q: `pip install vllm` 特别慢或失败？**
-A: 使用国内镜像安装：`pip install vllm -i https://mirrors.aliyun.com/pypi/simple/ --trusted-host mirrors.aliyun.com`。若编译失败，确认 CUDA 版本 ≥ 11.8 且已安装编译工具：`sudo apt install -y build-essential`。
+A: 优先使用官方源并保持新环境安装，避免版本回溯冲突：`pip install vllm -i https://pypi.org/simple`。若编译失败，确认 CUDA 版本与 wheel 匹配，且已安装编译工具：`sudo apt install -y build-essential`。
 
 **Q: `bash scripts/train_eval.sh` 报 `set: pipefail: invalid option name`？**
 A: 脚本文件是 Windows 的 CRLF 换行导致的（实际变成 `pipefail\\r`）。在远程 Linux 服务器上执行：
