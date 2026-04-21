@@ -309,6 +309,30 @@ python3 -c "import torch; print(f'PyTorch {torch.__version__}, CUDA: {torch.cuda
 python3 -c "import vllm; print(f'vLLM {vllm.__version__}')"
 ```
 
+**5.1（下策）使用 Conda 备份文件快速恢复环境**
+
+当常规 `pip install -r requirements.txt` 因依赖冲突、历史残留或临时时间紧无法快速修复时，可使用仓库内备份文件 **`conda_qwen_coder_backup.yml`** 直接恢复一份可运行环境（仅作为快速恢复方案，日常仍优先用上面的常规安装）。
+
+```bash
+cd ~/yejunyin/graduationDesign/ati-codegen
+
+# 方案 A：新建恢复环境（推荐，避免污染现有环境）
+conda env create -f conda_qwen_coder_backup.yml -p ~/yejunyin/conda-envs/qwen-coder
+conda activate ~/yejunyin/conda-envs/qwen-coder
+
+# 方案 B：覆盖更新当前环境（慎用，可能改变当前稳定环境）
+# conda env update -f conda_qwen_coder_backup.yml -p ~/yejunyin/conda-envs/qwen-coder --prune
+
+# 验证
+python3 -c "import torch; print(f'PyTorch {torch.__version__}, CUDA: {torch.cuda.is_available()}')"
+python3 -c "import vllm; print(f'vLLM {vllm.__version__}')"
+```
+
+说明：
+- 该备份文件是“某次可运行状态快照”，用于**快速回滚/救火**，不保证在所有机器上 100% 无修改复现。  
+- 若服务器 CUDA、驱动、系统包版本差异较大，仍可能需要微调个别包版本。  
+- 恢复成功后，建议回到常规流程维护 `requirements.txt`，避免长期依赖历史快照。
+
 若你服务器不能使用 `cu128`，请把 `requirements.txt` 第一行 `--extra-index-url` 改为对应 CUDA 源（如 `cu121` / `cu118`），再重新执行上面的第 3 步。
 
 若安装时发现 `pip` 仍使用历史镜像（例如 `pip install` 输出里出现 `mirrors.aliyun.com`），再执行以下清理后重试：
