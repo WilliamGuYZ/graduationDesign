@@ -3,6 +3,7 @@ Qwen2.5-Coder-7B-Instruct + LoRA CoT 两阶段推理评估脚本
 """
 
 import gc
+import argparse
 import json
 import os
 import random
@@ -63,6 +64,8 @@ BATCH_SIZE = 32
 VLLM_MAX_MODEL_LEN = 8192
 GPU_MEMORY_UTILIZATION = 0.85
 SAMPLE_LIMIT: Optional[int] = None
+FEW_SHOT_K_DEFAULT = 0
+FEW_SHOT_POOL_PATH = os.path.join(_PROJECT_ROOT, "data", "processed", "KodCode_train.jsonl")
 
 _SUBPROC_SNIPPET = (
     "import json,sys;sys.path.insert(0,sys.argv[1]);"
@@ -118,6 +121,63 @@ def pass_at_k(n: int, c: int, k: int) -> float:
     return 1.0 - comb(n - c, k) / comb(n, k)
 
 
+def _as_str_list(v: Any) -> List[str]:
+    if isinstance(v, list):
+        return [str(x).strip() for x in v if str(x).strip()]
+    return []
+
+
+def _few_shot_score(target: Dict[str, Any], cand: Dict[str, Any]) -> int:
+    t_strong = set(_as_str_list(target.get("strong_tags")))
+    c_strong = set(_as_str_list(cand.get("strong_tags")))
+    t_tags = set(_as_str_list(target.get("tags")))
+    c_tags = set(_as_str_list(cand.get("tags")))
+    strong_overlap = len(t_strong & c_strong)
+    tag_overlap = len(t_tags & c_tags)
+    # 强标签权重更高，提升“算法骨架”一致性
+    return strong_overlap * 2 + tag_overlap
+
+
+def _build_instruction(question: str, func_name: str, params: str) -> str:
+    return (
+        f"Implement the function `{func_name}` that takes {params} to solve:\n\n"
+        f"{question}\n\n"
+        "Think step by step, then output the Python code."
+    )
+
+
+def _build_cot_response(item: Dict[str, Any]) -> str:
+    thought = str(item.get("thought_step", "")).strip()
+    code = str(item.get("solution", "")).strip()
+    if thought:
+        return f"{thought}\n\n```python\n{code}\n```"
+    return f"```python\n{code}\n```"
+
+
+def _select_few_shots(
+    target: Dict[str, Any],
+    pool: List[Dict[str, Any]],
+    k: int,
+    rng: random.Random,
+) -> List[Dict[str, Any]]:
+    if k <= 0:
+        return []
+    candidates = [
+        p for p in pool
+        if p.get("question") != target.get("question")
+        and str(p.get("thought_step", "")).strip()
+        and str(p.get("solution", "")).strip()
+    ]
+    if not candidates:
+        return []
+    scored = sorted(
+        candidates,
+        key=lambda x: (_few_shot_score(target, x), rng.random()),
+        reverse=True,
+    )
+    return scored[:k]
+
+
 def test_solution_code_with_timeout(
     solution_code: str, test_code: str, timeout: int = 5
 ) -> Tuple[bool, Optional[str]]:
@@ -151,6 +211,14 @@ def test_solution_code_with_timeout(
 
 
 def main():
+    parser = argparse.ArgumentParser(description="CoT LoRA 两阶段评测（支持 few-shot）")
+    parser.add_argument("--few-shot-k", type=int, default=FEW_SHOT_K_DEFAULT, help="每道题 few-shot 示例数量")
+    parser.add_argument("--few-shot-pool", type=str, default=FEW_SHOT_POOL_PATH, help="few-shot 示例库 JSONL 路径")
+    parser.add_argument("--result-suffix", type=str, default="", help="结果文件后缀（如 cot_zs / cot_fs2）")
+    args = parser.parse_args()
+    if args.few_shot_k < 0:
+        raise ValueError("--few-shot-k 不能为负数")
+
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
     lora_path = _read_lora_adapter_dir()
@@ -161,6 +229,7 @@ def main():
     print(f"LoRA 路径:           {lora_path}")
     print(f"每问题样本数:        {NUM_SAMPLES}")
     print(f"批处理大小:          {BATCH_SIZE}")
+    print(f"Few-shot K:          {args.few_shot_k}")
     
     # 加载 Tokenizer
     print("\n加载模型...")
@@ -195,7 +264,7 @@ def main():
         lora_path=lora_path,
     )
     
-    # 加载数据集
+    # 加载评测数据集
     dataset = []
     with open(DATASET_PATH, "r", encoding="utf-8") as f:
         for line in f:
@@ -215,6 +284,8 @@ def main():
                 "test_code": test_code,
                 "func_name": get_function_name_from_test_info(test_info),
                 "params": get_parameter_list(test_info),
+                "tags": row.get("tags", []),
+                "strong_tags": row.get("strong_tags", []),
             })
     
     print(f"数据集: {len(dataset)} 条")
@@ -223,6 +294,30 @@ def main():
         dataset = dataset[:SAMPLE_LIMIT]
     
     total_samples = len(dataset) * NUM_SAMPLES
+
+    # 加载 few-shot 示例库（通常是 train split）
+    few_shot_pool: List[Dict[str, Any]] = []
+    if args.few_shot_k > 0:
+        if not os.path.isfile(args.few_shot_pool):
+            raise FileNotFoundError(f"few-shot 示例库不存在: {args.few_shot_pool}")
+        with open(args.few_shot_pool, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                row = json.loads(line)
+                q = clean_question(row.get("question"))
+                ti = row.get("test_info", [])
+                few_shot_pool.append({
+                    "question": q,
+                    "func_name": get_function_name_from_test_info(ti),
+                    "params": get_parameter_list(ti),
+                    "thought_step": row.get("thought_step", ""),
+                    "solution": row.get("solution", ""),
+                    "tags": row.get("tags", []),
+                    "strong_tags": row.get("strong_tags", []),
+                })
+        print(f"few-shot 示例库:      {len(few_shot_pool)} 条（来自 {args.few_shot_pool}）")
     
     # 构建 prompts
     print("构建 prompts...")
@@ -230,11 +325,25 @@ def main():
     all_metadata = []
     
     for problem_idx, data in enumerate(dataset):
+        rng = random.Random(2026 + problem_idx)
+        selected_shots = _select_few_shots(data, few_shot_pool, args.few_shot_k, rng) if args.few_shot_k > 0 else []
+
         for sample_idx in range(NUM_SAMPLES):
             reasoning_messages = [
                 {"role": "system", "content": "You are an expert algorithm teacher. Generate step-by-step reasoning."},
-                {"role": "user", "content": f"Problem:\n{data['question']}\n\nGenerate step-by-step reasoning."}
             ]
+            for shot in selected_shots:
+                reasoning_messages.append({
+                    "role": "user",
+                    "content": f"Problem:\n{shot['question']}\n\nGenerate step-by-step reasoning.",
+                })
+                reasoning_messages.append({
+                    "role": "assistant",
+                    "content": str(shot.get("thought_step", "")).strip(),
+                })
+            reasoning_messages.append(
+                {"role": "user", "content": f"Problem:\n{data['question']}\n\nGenerate step-by-step reasoning."}
+            )
             reasoning_prompt = tokenizer.apply_chat_template(reasoning_messages, tokenize=False, add_generation_prompt=True)
             
             all_reasoning_prompts.append(reasoning_prompt)
@@ -245,6 +354,7 @@ def main():
                 "params": data["params"],
                 "question": data["question"],
                 "test_code": data["test_code"],
+                "few_shots": selected_shots,
             })
     
     # ========== 阶段1：生成推理 ==========
@@ -281,8 +391,14 @@ def main():
         
         code_messages = [
             {"role": "system", "content": "You are an expert Python programmer. Based on the reasoning, write the code."},
-            {"role": "user", "content": f"Reasoning:\n{reasoning}\n\nNow implement the function `{meta['func_name']}` that takes {meta['params']} to solve:\n\n{meta['question']}\n\nWrite only the Python code in ```python block."}
         ]
+        for shot in meta.get("few_shots", []):
+            shot_instruction = _build_instruction(shot["question"], shot["func_name"], shot["params"])
+            code_messages.append({"role": "user", "content": shot_instruction})
+            code_messages.append({"role": "assistant", "content": _build_cot_response(shot)})
+        code_messages.append(
+            {"role": "user", "content": f"Reasoning:\n{reasoning}\n\nNow implement the function `{meta['func_name']}` that takes {meta['params']} to solve:\n\n{meta['question']}\n\nWrite only the Python code in ```python block."}
+        )
         code_prompt = tokenizer.apply_chat_template(code_messages, tokenize=False, add_generation_prompt=True)
         code_prompts.append(code_prompt)
         code_indices.append(idx)
@@ -345,13 +461,15 @@ def main():
     
     # 保存结果
     os.makedirs(RESULTS_DIR, exist_ok=True)
-    output_file = os.path.join(RESULTS_DIR, "eval_lora_cot_passk.json")
+    suffix = f"_{args.result_suffix.strip()}" if args.result_suffix.strip() else ""
+    output_file = os.path.join(RESULTS_DIR, f"eval_lora_cot_passk{suffix}.json")
     
     with open(output_file, "w") as f:
         json.dump({
             "timestamp": timestamp,
             "num_problems": len(dataset),
             "num_samples": NUM_SAMPLES,
+            "few_shot_k": args.few_shot_k,
             "batch_size": BATCH_SIZE,
             "pass_at_k": {f"pass@{k}": round(results_passk[k], 4) for k in K_LIST},
             "generation_stats": {

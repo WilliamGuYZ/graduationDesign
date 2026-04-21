@@ -12,6 +12,7 @@ import os
 import json
 import random
 import time
+import argparse
 from datetime import datetime
 
 import torch
@@ -94,7 +95,7 @@ def build_cot_response(example):
     return f"```python\n{code}\n```"
 
 
-def build_few_shot_messages(example, pool):
+def build_few_shot_messages(example, pool, num_few_shots: int):
     """
     构建 few-shot CoT 对话。
 
@@ -118,7 +119,7 @@ def build_few_shot_messages(example, pool):
 
     # 从 pool 中随机抽取 few-shot 示范（排除自身）
     candidates = [e for e in pool if e["question"] != example["question"]]
-    shots = random.sample(candidates, min(NUM_FEW_SHOTS, len(candidates)))
+    shots = random.sample(candidates, min(num_few_shots, len(candidates)))
 
     for shot in shots:
         messages.append({"role": "user",      "content": build_instruction(shot)})
@@ -198,6 +199,18 @@ def save_latest_adapter_path(adapter_path):
 
 
 def main():
+    parser = argparse.ArgumentParser(description="训练 CoT LoRA（支持 few-shot 示例）")
+    parser.add_argument(
+        "--num-few-shots",
+        type=int,
+        default=NUM_FEW_SHOTS,
+        help=f"每条样本前插入 few-shot 示例数（默认: {NUM_FEW_SHOTS}）",
+    )
+    args = parser.parse_args()
+    if args.num_few_shots < 0:
+        raise ValueError("--num-few-shots 不能为负数")
+    num_few_shots = args.num_few_shots
+
     random.seed(SEED)
 
     timestamp  = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -215,7 +228,7 @@ def main():
 
     # 2. 构建 few-shot 消息
     print("[2/5] 构建 Few-Shot CoT 对话格式...")
-    formatted_data = [build_few_shot_messages(item, raw_data) for item in raw_data]
+    formatted_data = [build_few_shot_messages(item, raw_data, num_few_shots) for item in raw_data]
     dataset = Dataset.from_list(formatted_data)
 
     # 3. 划分数据集
@@ -338,7 +351,7 @@ def main():
     # 11. 保存配置
     config = {
         "training_mode": "few_shot_cot",
-        "num_few_shots": NUM_FEW_SHOTS,
+        "num_few_shots": num_few_shots,
         "model_path": MODEL_PATH,
         "data_path": DATA_PATH,
         "max_length": MAX_LENGTH,
@@ -363,7 +376,7 @@ def main():
     print("\n" + "=" * 60)
     print("训练完成！（Few-Shot CoT）")
     print("=" * 60)
-    print(f"Few-Shot 示范数: {NUM_FEW_SHOTS}")
+    print(f"Few-Shot 示范数: {num_few_shots}")
     print(f"训练耗时: {train_time / 60:.2f} 分钟")
     print(f"输出目录: {output_dir}")
     print(f"LoRA 适配器: {adapter_path}")

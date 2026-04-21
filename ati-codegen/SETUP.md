@@ -56,7 +56,7 @@ ati-codegen/
 | 服务器 OS | Linux（推荐 Ubuntu 22.04 / 20.04）                   |
 | GPU     | NVIDIA，≥16GB 显存（推荐 24GB+）                       |
 | CUDA    | 11.8 或 12.x                                     |
-| Python  | 3.10+（本仓库 `requirements.txt` 说明中推荐 3.11）      |
+| Python  | 3.11（推荐固定 3.11.x，避免依赖解析冲突）      |
 | 磁盘      | 系统盘 ≥40GB；另建议 ≥100GB 可用空间（模型约 14GB + 数据 + 训练输出） |
 | 本地电脑    | Windows 10/11 + WSL2 或 Linux 虚拟机（SSH 客户端）        |
 
@@ -290,9 +290,9 @@ conda config --add pkgs_dirs ~/yejunyin/conda-pkgs
 
 多人并行安装时仍可能产生锁竞争，尽量由管理员统一装好依赖，成员只做 `git pull` 与运行。
 
-#### 5. 安装依赖（与 `requirements.txt` 头部说明一致）
+#### 5. 安装依赖（一键）
 
-激活共享环境后，在 **`ati-codegen` 目录** 下按 **`requirements.txt`** 中的顺序操作（**务必先配 pip 镜像、再装 PyTorch、再 `pip install -r`**）：
+激活共享环境后，在 **`ati-codegen` 目录** 下执行以下命令即可（`requirements.txt` 已内置 PyTorch CUDA 轮子源）：
 
 ```bash
 cd ~/yejunyin/graduationDesign/ati-codegen
@@ -303,14 +303,11 @@ pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/
 pip config set global.trusted-host mirrors.aliyun.com
 pip install --upgrade pip -i https://mirrors.aliyun.com/pypi/simple/ --trusted-host mirrors.aliyun.com
 
-# 2）先安装 PyTorch（CUDA 版本需与服务器驱动匹配；以下为 requirements.txt 中的 cu121 示例）
-pip install torch==2.5.0 torchvision==0.20.0 torchaudio==2.5.0 --index-url https://download.pytorch.org/whl/cu121
-
-# 3）其余依赖一键安装
+# 2）一键安装全部依赖（含 torch/torchvision/torchaudio）
 pip install -r requirements.txt
 ```
 
-若服务器 CUDA / 驱动与 `cu121`  wheel 不匹配，请根据 `nvidia-smi` 与 PyTorch 官网说明改用 `cu118` 等对应命令，再执行 `pip install -r requirements.txt`。
+若你服务器不能使用 `cu121`（如驱动过旧），请把 `requirements.txt` 第一行 `--extra-index-url` 改为对应 CUDA 源（如 `cu118`），再重新执行 `pip install -r requirements.txt`。
 
 安装完成后可在服务器上验证：
 
@@ -512,8 +509,8 @@ A: 服务器未正确安装 NVIDIA 驱动，或当前无 GPU。在 Ubuntu 上可
 **Q: `torch.cuda.is_available()` 返回 `False`？**
 A: 多为 PyTorch 与驱动/CUDA 不匹配，或装成了 CPU 版 wheel。请按 `nvidia-smi` 显示的驱动与官方说明重装带 CUDA 的 PyTorch（例如 `pip install torch --index-url https://download.pytorch.org/whl/cu121`），并与本文「安装依赖」及 `requirements.txt` 中的版本说明对齐。
 
-**Q: `pip install torch` / `pip install sympy` 下载很慢或超时？**
-A: 先升级 pip，并配置国内 PyPI 镜像（见上文「安装依赖」中的 `pip config set global.index-url`）。旧版 pip（如 22.x）可能仍把部分下载重定向到国外源。安装 torch 前可先 `pip install sympy networkx filelock`，再安装 PyTorch wheel。
+**Q: `pip install -r requirements.txt` 下载很慢或超时？**
+A: 先升级 pip，并配置国内 PyPI 镜像（见上文「安装依赖」中的 `pip config set global.index-url`）。建议固定 Python 3.11，并重试 `pip install -r requirements.txt`。
 
 **Q: `pip install vllm` 特别慢或失败？**
 A: 使用国内镜像安装：`pip install vllm -i https://mirrors.aliyun.com/pypi/simple/ --trusted-host mirrors.aliyun.com`。若编译失败，确认 CUDA 版本 ≥ 11.8 且已安装编译工具：`sudo apt install -y build-essential`。
