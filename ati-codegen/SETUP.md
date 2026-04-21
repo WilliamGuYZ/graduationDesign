@@ -235,7 +235,7 @@ ssh -V
 在 **本地 WSL / 虚拟机终端** 中执行（`-p` 指定远端 SSH 端口；用户名与 IP 以实验平台为准）：
 
 ```bash
-ssh -p 8552 ubuntu@116.172.94.6
+ssh -p 23822 ubuntu@116.172.94.6
 ```
 
 首次连接会提示确认主机指纹，输入 `yes`；随后按提示输入密码（输入时终端不显示字符，属正常现象）。
@@ -415,8 +415,8 @@ cat evaluation/results/eval_lora_passk.txt
 
 ```bash
 mkdir -p evaluation/results train/outputs
-scp -P 8552 ubuntu@116.172.94.6:~/yejunyin/graduationDesign/ati-codegen/evaluation/results/*.txt ./evaluation/results/
-scp -r -P 8552 ubuntu@116.172.94.6:~/yejunyin/graduationDesign/ati-codegen/train/outputs/ ./train/
+scp -P 23822 ubuntu@116.172.94.6:~/yejunyin/graduationDesign/ati-codegen/evaluation/results/*.txt ./evaluation/results/
+scp -r -P 23822 ubuntu@116.172.94.6:~/yejunyin/graduationDesign/ati-codegen/train/outputs/ ./train/
 ```
 
 ---
