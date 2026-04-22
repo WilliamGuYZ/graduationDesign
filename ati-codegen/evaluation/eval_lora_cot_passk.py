@@ -39,7 +39,7 @@ warnings.filterwarnings("ignore")
 from tqdm import tqdm
 from vllm import LLM, SamplingParams
 from vllm.lora.request import LoRARequest
-from transformers import AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 # =========================
 # CONFIG
@@ -61,6 +61,7 @@ MAX_TOKENS_CODE = 1024
 NUM_SAMPLES = 10
 TEMPERATURE = 0.3
 BATCH_SIZE = 32
+HF_BATCH_SIZE = 2
 
 # vLLM 配置
 VLLM_MAX_MODEL_LEN = 8192
@@ -212,6 +213,47 @@ def test_solution_code_with_timeout(
     return False, err
 
 
+def hf_generate_texts(
+    prompts: List[str],
+    tokenizer: AutoTokenizer,
+    model,
+    max_new_tokens: int,
+    desc: str,
+) -> List[str]:
+    import torch
+
+    texts: List[str] = []
+    bs = HF_BATCH_SIZE
+    for i in tqdm(range(0, len(prompts), bs), desc=desc, unit="batch"):
+        batch = prompts[i : i + bs]
+        encoded = tokenizer(
+            batch,
+            return_tensors="pt",
+            padding=True,
+            truncation=True,
+            max_length=VLLM_MAX_MODEL_LEN,
+        )
+        encoded = {k: v.to(model.device) for k, v in encoded.items()}
+        input_lens = encoded["attention_mask"].sum(dim=1).tolist()
+
+        with torch.no_grad():
+            out = model.generate(
+                **encoded,
+                do_sample=True,
+                temperature=TEMPERATURE,
+                top_p=0.95,
+                top_k=50,
+                max_new_tokens=max_new_tokens,
+                pad_token_id=tokenizer.pad_token_id,
+                eos_token_id=tokenizer.eos_token_id,
+            )
+
+        for r, ilen in enumerate(input_lens):
+            new_tokens = out[r, int(ilen):]
+            texts.append(tokenizer.decode(new_tokens, skip_special_tokens=True).strip())
+    return texts
+
+
 def main():
     parser = argparse.ArgumentParser(description="CoT LoRA 两阶段评测（支持 few-shot）")
     parser.add_argument("--few-shot-k", type=int, default=FEW_SHOT_K_DEFAULT, help="每道题 few-shot 示例数量")
@@ -259,23 +301,36 @@ def main():
     if os.path.isdir(lora_path) and (os.path.isfile(_tok_cfg) or os.path.isfile(_tok_json)):
         _llm_kwargs["tokenizer"] = lora_path
     
+    backend = "vllm"
+    llm = None
+    lora_request = None
+    hf_model = None
     try:
         llm = LLM(**_llm_kwargs)
+        lora_request = LoRARequest(
+            lora_name="eval_adapter",
+            lora_int_id=1,
+            lora_path=lora_path,
+        )
     except Exception as e:
-        msg = str(e)
-        if "computeCapability not supported" in msg or "Engine core initialization failed" in msg:
-            raise RuntimeError(
-                "vLLM 初始化失败：当前 GPU/Triton 组合不支持 LoRA kernel。"
-                "已尝试兼容参数（VLLM_USE_V1=0 + enforce_eager=True）仍失败。"
-                "建议升级/重装匹配的 vLLM+Triton+CUDA，或改用 HF(Transformers+PEFT) 评测后端。"
-            ) from e
-        raise
-    
-    lora_request = LoRARequest(
-        lora_name="eval_adapter",
-        lora_int_id=1,
-        lora_path=lora_path,
-    )
+        backend = "hf_peft_fallback"
+        print("⚠️ vLLM + LoRA 初始化失败，自动回退到 Transformers+PEFT 评测。")
+        print(f"失败原因: {str(e)[:240]}...")
+        from peft import PeftModel
+        import torch
+
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        dtype = torch.float16 if device == "cuda" else torch.float32
+        base_model = AutoModelForCausalLM.from_pretrained(
+            MODEL_PATH,
+            trust_remote_code=True,
+            torch_dtype=dtype,
+            device_map="auto" if device == "cuda" else None,
+        )
+        hf_model = PeftModel.from_pretrained(base_model, lora_path)
+        hf_model.eval()
+        if device != "cuda":
+            hf_model.to(device)
     
     # 加载评测数据集
     dataset = []
@@ -374,22 +429,27 @@ def main():
     print(f"\n[1/2] 生成推理 (共 {total_samples} 个)...")
     all_reasonings = [None] * len(all_reasoning_prompts)
     
-    with tqdm(total=len(all_reasoning_prompts), desc="推理进度", unit="个") as pbar:
-        for i in range(0, len(all_reasoning_prompts), BATCH_SIZE):
-            batch = all_reasoning_prompts[i:i+BATCH_SIZE]
-            
-            sampling_params = SamplingParams(
-                temperature=TEMPERATURE,
-                max_tokens=MAX_TOKENS_REASONING,
-                top_p=0.95,
-                top_k=50,
-            )
-            outputs = llm.generate(batch, sampling_params, lora_request=lora_request, use_tqdm=False)
-            
-            for j, output in enumerate(outputs):
-                all_reasonings[i+j] = output.outputs[0].text.strip()
-            
-            pbar.update(len(batch))
+    if backend == "vllm":
+        with tqdm(total=len(all_reasoning_prompts), desc="推理进度", unit="个") as pbar:
+            for i in range(0, len(all_reasoning_prompts), BATCH_SIZE):
+                batch = all_reasoning_prompts[i:i+BATCH_SIZE]
+                
+                sampling_params = SamplingParams(
+                    temperature=TEMPERATURE,
+                    max_tokens=MAX_TOKENS_REASONING,
+                    top_p=0.95,
+                    top_k=50,
+                )
+                outputs = llm.generate(batch, sampling_params, lora_request=lora_request, use_tqdm=False)
+                
+                for j, output in enumerate(outputs):
+                    all_reasonings[i+j] = output.outputs[0].text.strip()
+                
+                pbar.update(len(batch))
+    else:
+        all_reasonings = hf_generate_texts(
+            all_reasoning_prompts, tokenizer, hf_model, MAX_TOKENS_REASONING, "HF推理阶段"
+        )
     
     # ========== 阶段2：生成代码 ==========
     print(f"\n[2/2] 生成代码 (共 {total_samples} 个)...")
@@ -416,23 +476,30 @@ def main():
         code_prompts.append(code_prompt)
         code_indices.append(idx)
     
-    with tqdm(total=len(code_prompts), desc="代码进度", unit="个") as pbar:
-        code_params = SamplingParams(
-            temperature=TEMPERATURE,
-            max_tokens=MAX_TOKENS_CODE,
-            top_p=0.95,
-            top_k=50,
+    if backend == "vllm":
+        with tqdm(total=len(code_prompts), desc="代码进度", unit="个") as pbar:
+            code_params = SamplingParams(
+                temperature=TEMPERATURE,
+                max_tokens=MAX_TOKENS_CODE,
+                top_p=0.95,
+                top_k=50,
+            )
+            
+            for i in range(0, len(code_prompts), BATCH_SIZE):
+                batch = code_prompts[i:i+BATCH_SIZE]
+                outputs = llm.generate(batch, code_params, lora_request=lora_request, use_tqdm=False)
+                
+                for j, output in enumerate(outputs):
+                    idx = code_indices[i+j]
+                    all_codes[idx] = extract_code(output.outputs[0].text)
+                
+                pbar.update(len(batch))
+    else:
+        hf_codes = hf_generate_texts(
+            code_prompts, tokenizer, hf_model, MAX_TOKENS_CODE, "HF代码阶段"
         )
-        
-        for i in range(0, len(code_prompts), BATCH_SIZE):
-            batch = code_prompts[i:i+BATCH_SIZE]
-            outputs = llm.generate(batch, code_params, lora_request=lora_request, use_tqdm=False)
-            
-            for j, output in enumerate(outputs):
-                idx = code_indices[i+j]
-                all_codes[idx] = extract_code(output.outputs[0].text)
-            
-            pbar.update(len(batch))
+        for idx, txt in zip(code_indices, hf_codes):
+            all_codes[idx] = extract_code(txt)
     
     # ========== 评估 ==========
     print("\n评估代码...")
@@ -467,6 +534,7 @@ def main():
     print("\n" + "=" * 70)
     print("两阶段推理评估结果")
     print("=" * 70)
+    print(f"推理后端:            {backend}")
     for k in K_LIST:
         v = results_passk[k]
         print(f"PASS@{k:<2}:             {v:.4f} ({v*100:.2f}%)")
@@ -484,6 +552,7 @@ def main():
             "num_samples": NUM_SAMPLES,
             "few_shot_k": args.few_shot_k,
             "batch_size": BATCH_SIZE,
+            "backend": backend,
             "pass_at_k": {f"pass@{k}": round(results_passk[k], 4) for k in K_LIST},
             "generation_stats": {
                 "empty_code": empty_code_count,
@@ -493,5 +562,8 @@ def main():
     
     print(f"\n结果保存至: {output_file}")
     
-    del llm
+    if llm is not None:
+        del llm
+    if hf_model is not None:
+        del hf_model
     gc.collect()

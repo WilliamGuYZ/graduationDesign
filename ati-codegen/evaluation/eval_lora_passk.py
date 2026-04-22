@@ -34,7 +34,7 @@ warnings.filterwarnings("ignore")
 from tqdm import tqdm
 from vllm import LLM, SamplingParams
 from vllm.lora.request import LoRARequest
-from transformers import AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 # =========================
 # CONFIG
@@ -56,6 +56,7 @@ TEMPERATURE = 0.3
 
 VLLM_MAX_MODEL_LEN     = 2048
 GPU_MEMORY_UTILIZATION = 0.9
+HF_BATCH_SIZE = 2
 
 SAMPLE_LIMIT: Optional[int] = None
 
@@ -114,6 +115,66 @@ def get_parameter_list(test_info: List[Dict]) -> str:
     if test_info and len(test_info) > 0:
         return test_info[0].get("parameter_list", "")
     return ""
+
+
+def generate_with_hf_lora(
+    prompts: List[str],
+    tokenizer: AutoTokenizer,
+    lora_path: str,
+) -> List[str]:
+    """
+    vLLM 不可用时，回退到 Transformers + PEFT 生成。
+    """
+    from peft import PeftModel
+    import torch
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    dtype = torch.float16 if device == "cuda" else torch.float32
+
+    base_model = AutoModelForCausalLM.from_pretrained(
+        MODEL_PATH,
+        trust_remote_code=True,
+        torch_dtype=dtype,
+        device_map="auto" if device == "cuda" else None,
+    )
+    model = PeftModel.from_pretrained(base_model, lora_path)
+    model.eval()
+    if device != "cuda":
+        model.to(device)
+
+    generations: List[str] = []
+    for i in tqdm(range(0, len(prompts), HF_BATCH_SIZE), desc="HF 生成"):
+        batch = prompts[i : i + HF_BATCH_SIZE]
+        encoded = tokenizer(
+            batch,
+            return_tensors="pt",
+            padding=True,
+            truncation=True,
+            max_length=VLLM_MAX_MODEL_LEN,
+        )
+        encoded = {k: v.to(model.device) for k, v in encoded.items()}
+        input_len = encoded["input_ids"].shape[1]
+
+        with torch.no_grad():
+            out = model.generate(
+                **encoded,
+                do_sample=True,
+                temperature=TEMPERATURE,
+                top_p=0.95,
+                top_k=50,
+                max_new_tokens=MAX_TOKENS,
+                pad_token_id=tokenizer.pad_token_id,
+                eos_token_id=tokenizer.eos_token_id,
+            )
+
+        new_tokens = out[:, input_len:]
+        texts = tokenizer.batch_decode(new_tokens, skip_special_tokens=True)
+        generations.extend(texts)
+
+    del model
+    del base_model
+    gc.collect()
+    return generations
 
 
 # =========================
@@ -238,31 +299,28 @@ def main():
     ):
         _llm_kwargs["tokenizer"] = lora_path
 
+    backend = "vllm"
+    llm = None
+    lora_request = None
+    sampling_params = None
     try:
         llm = LLM(**_llm_kwargs)
+        lora_request = LoRARequest(
+            lora_name="eval_adapter",
+            lora_int_id=1,
+            lora_path=lora_path,
+        )
+        sampling_params = SamplingParams(
+            temperature=TEMPERATURE,
+            max_tokens=MAX_TOKENS,
+            top_p=0.95,
+            top_k=50,
+            stop=None,
+        )
     except Exception as e:
-        msg = str(e)
-        if "computeCapability not supported" in msg or "Engine core initialization failed" in msg:
-            raise RuntimeError(
-                "vLLM 初始化失败：当前 GPU/Triton 组合不支持 LoRA kernel。"
-                "已尝试兼容参数（VLLM_USE_V1=0 + enforce_eager=True）仍失败。"
-                "建议升级/重装匹配的 vLLM+Triton+CUDA，或改用 HF(Transformers+PEFT) 评测后端。"
-            ) from e
-        raise
-
-    lora_request = LoRARequest(
-        lora_name="eval_adapter",
-        lora_int_id=1,
-        lora_path=lora_path,
-    )
-
-    sampling_params = SamplingParams(
-        temperature=TEMPERATURE,
-        max_tokens=MAX_TOKENS,
-        top_p=0.95,
-        top_k=50,
-        stop=None,
-    )
+        backend = "hf_peft_fallback"
+        print("⚠️ vLLM + LoRA 初始化失败，自动回退到 Transformers+PEFT 评测。")
+        print(f"失败原因: {str(e)[:240]}...")
 
     print("\n" + "=" * 60)
     print("加载数据集...")
@@ -349,11 +407,15 @@ def main():
     print("开始生成（LoRA）...")
     print("=" * 60)
 
-    outputs = llm.generate(
-        all_prompts,
-        sampling_params,
-        lora_request=lora_request,
-    )
+    if backend == "vllm":
+        outputs = llm.generate(
+            all_prompts,
+            sampling_params,
+            lora_request=lora_request,
+        )
+        generated_texts = [o.outputs[0].text for o in outputs]
+    else:
+        generated_texts = generate_with_hf_lora(all_prompts, tokenizer, lora_path)
 
     print("\n" + "=" * 60)
     print("评估中...")
@@ -362,10 +424,9 @@ def main():
     problem_results: List[List[bool]] = [[] for _ in range(len(dataset))]
     timeout_count = 0
 
-    for data_idx, output in tqdm(
-        zip(prompt_to_problem_idx, outputs), total=len(all_prompts)
+    for data_idx, generated in tqdm(
+        zip(prompt_to_problem_idx, generated_texts), total=len(all_prompts)
     ):
-        generated = output.outputs[0].text
         code = extract_code(generated)
         passed, error, _, _, _ = execute_test_with_debug(
             code, dataset[data_idx]["test_code"], dataset[data_idx]["func_name"], data_idx
@@ -398,6 +459,7 @@ def main():
     print(f"温度参数:            {TEMPERATURE}")
     print(f"测试超时:            {TIMEOUT} 秒")
     print(f"LoRA 路径:           {lora_path}")
+    print(f"推理后端:            {backend}")
     print("-" * 60)
     for k in K_LIST:
         v = results_passk[k]
@@ -420,6 +482,7 @@ def main():
         "num_samples": NUM_SAMPLES,
         "temperature": TEMPERATURE,
         "timeout": TIMEOUT,
+        "backend": backend,
         "pass_at_k": {f"pass@{k}": round(results_passk[k], 4) for k in K_LIST},
         "original_solution_pass_rate": round(solution_pass_count / n_ds, 4) if n_ds else 0,
     }
@@ -429,7 +492,8 @@ def main():
         json.dump(results, f, indent=2, ensure_ascii=False)
 
     print(f"\n结果已保存至: {output_file}")
-    del llm
+    if llm is not None:
+        del llm
     gc.collect()
 
 
