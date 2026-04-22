@@ -186,9 +186,10 @@ def main():
     
     model = AutoModelForCausalLM.from_pretrained(
         MODEL_PATH,
-        dtype=torch.bfloat16,
+        torch_dtype=torch.bfloat16,
         device_map="auto",
         trust_remote_code=True,
+        attn_implementation="sdpa",
     )
     # 梯度检查点与推理 KV cache 互斥；显式关闭可避免反复打印「Setting use_cache=False」
     model.config.use_cache = False
