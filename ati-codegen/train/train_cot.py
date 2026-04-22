@@ -13,6 +13,7 @@ import json
 import random
 import time
 import argparse
+import inspect
 from datetime import datetime
 
 import torch
@@ -198,7 +199,31 @@ def save_latest_adapter_path(adapter_path):
     print(f"路径内容: {adapter_path}")
 
 
+def patch_accelerate_unwrap_model():
+    """
+    兼容旧版 accelerate：
+    transformers 新版本会调用 unwrap_model(..., keep_torch_compile=False)，
+    而旧 accelerate 的 unwrap_model 不接受该参数。
+    """
+    try:
+        from accelerate import Accelerator
+    except Exception:
+        return
+
+    unwrap = Accelerator.unwrap_model
+    if "keep_torch_compile" in inspect.signature(unwrap).parameters:
+        return
+
+    def _unwrap_model_compat(self, model, *args, keep_torch_compile=None, **kwargs):
+        return unwrap(self, model, *args, **kwargs)
+
+    Accelerator.unwrap_model = _unwrap_model_compat
+    print("检测到旧版 accelerate，已应用 unwrap_model 兼容补丁。")
+
+
 def main():
+    patch_accelerate_unwrap_model()
+
     parser = argparse.ArgumentParser(description="训练 CoT LoRA（支持 few-shot 示例）")
     parser.add_argument(
         "--num-few-shots",
