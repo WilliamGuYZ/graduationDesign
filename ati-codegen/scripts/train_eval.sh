@@ -19,11 +19,11 @@ COT_FEW_SHOTS="${COT_FEW_SHOTS:-2}"
 #echo "============================================================"
 #python3 evaluation/eval_base_passk.py
 
-echo "============================================================"
-echo "实验 B：LoRA（仅代码）"
-echo "============================================================"
-echo ">>> 训练 LoRA（train.py）"
-python3 train/train.py
+#echo "============================================================"
+#echo "实验 B：LoRA（仅代码）"
+#echo "============================================================"
+#echo ">>> 训练 LoRA（train.py）"
+#python3 train/train.py
 echo ">>> 评测 LoRA（eval_lora_passk.py）"
 python3 evaluation/eval_lora_passk.py
 
