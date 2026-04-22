@@ -21,6 +21,8 @@ from typing import Any, Dict, List, Optional, Tuple
 os.environ["VLLM_LOGGING_LEVEL"] = "ERROR"
 os.environ["VLLM_NO_USAGE_STATS"] = "1"
 os.environ["VLLM_LOGGING_PREFIX"] = ""
+# 兼容旧 GPU / Triton：默认禁用 vLLM V1，避免 LoRA Triton kernel 编译失败
+os.environ.setdefault("VLLM_USE_V1", "0")
 
 import logging
 
@@ -225,6 +227,7 @@ def main():
         trust_remote_code=True,
         gpu_memory_utilization=GPU_MEMORY_UTILIZATION,
         max_model_len=VLLM_MAX_MODEL_LEN,
+        enforce_eager=True,
         enable_lora=True,
         max_lora_rank=32,
     )
@@ -235,7 +238,17 @@ def main():
     ):
         _llm_kwargs["tokenizer"] = lora_path
 
-    llm = LLM(**_llm_kwargs)
+    try:
+        llm = LLM(**_llm_kwargs)
+    except Exception as e:
+        msg = str(e)
+        if "computeCapability not supported" in msg or "Engine core initialization failed" in msg:
+            raise RuntimeError(
+                "vLLM 初始化失败：当前 GPU/Triton 组合不支持 LoRA kernel。"
+                "已尝试兼容参数（VLLM_USE_V1=0 + enforce_eager=True）仍失败。"
+                "建议升级/重装匹配的 vLLM+Triton+CUDA，或改用 HF(Transformers+PEFT) 评测后端。"
+            ) from e
+        raise
 
     lora_request = LoRARequest(
         lora_name="eval_adapter",
