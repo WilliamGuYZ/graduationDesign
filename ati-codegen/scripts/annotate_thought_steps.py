@@ -56,7 +56,7 @@ Solution:
 {solution}
 ```
 
-Output 3-5 numbered steps (Step N: [Tag] - explanation). Tags: Understand/Approach/Edge Cases/Implement/Verify. Steps only, no extra text."""
+Output 3-5 numbered steps (Step N: [Tag] - explanation). Tags: Understand/Approach/Edge Cases/Implement/Verify. Steps only, no extra text. Do NOT output any code, code blocks, or ```python fences — describe logic in prose only."""
 
 
 def load_done_set(output_path: str) -> set[str]:

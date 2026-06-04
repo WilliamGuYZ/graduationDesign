@@ -1,13 +1,15 @@
 """
-Qwen2.5-Coder-7B-Instruct LoRA 微调脚本
+CodeGeeX4-ALL-9B LoRA 微调脚本
 数据格式: {"question": "...", "solution": "...", "thought_step": "...", "test": "...", "test_info": [...], "tags": [...]}
 所有字段均已确认不为空
 """
 
-import os
-import json
-import time
+import argparse
+import functools
 import inspect
+import json
+import os
+import time
 from datetime import datetime
 
 import torch
@@ -25,7 +27,7 @@ from peft import LoraConfig, get_peft_model
 # ==================== 配置 ====================
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-MODEL_PATH = os.path.join(PROJECT_ROOT, "models", "Qwen2.5-Coder-7B-Instruct")
+MODEL_PATH = os.path.join(PROJECT_ROOT, "models", "CodeGeeX4-ALL-9B")
 DATA_PATH = os.path.join(PROJECT_ROOT, "data", "processed", "KodCode_train.jsonl")
 LATEST_LORA_POINTER = os.path.join(PROJECT_ROOT, "train", "latest_lora_adapter.txt")
 OUTPUT_ROOT = os.path.join(PROJECT_ROOT, "train", "outputs")
@@ -37,13 +39,16 @@ LORA_R = 32
 LORA_ALPHA = 64
 LORA_DROPOUT = 0.1
 LORA_TARGET_MODULES = [
-    "q_proj", "k_proj", "v_proj", "o_proj",
-    "gate_proj", "up_proj", "down_proj",
+    "query_key_value",                 # ChatGLM 融合 QKV
+    "dense",                           # attention 输出
+    "dense_h_to_4h", "dense_4h_to_h",  # MLP 两侧
 ]
 
 # 训练配置
-BATCH_SIZE = 4
-GRADIENT_ACCUMULATION = 8
+# 等效 batch = BATCH_SIZE * GRADIENT_ACCUMULATION = 32
+# 32GB 单卡（V100 等）：9B + LoRA + bf16 + grad-ckpt 后 BATCH_SIZE 须 ≤ 1，否则激活 OOM
+BATCH_SIZE = 1
+GRADIENT_ACCUMULATION = 32
 LEARNING_RATE = 2e-5
 NUM_EPOCHS = 3
 WARMUP_RATIO = 0.03
@@ -67,14 +72,22 @@ def load_jsonl(path):
     return data
 
 
+def _first_test_info(example: dict) -> dict:
+    """取出 test_info[0]；缺失时抛出明确错误，避免 KeyError。"""
+    ti = example.get("test_info")
+    if not ti or not isinstance(ti, list) or not isinstance(ti[0], dict):
+        raise ValueError("样本缺少有效的 test_info[0]（需含 function_name、parameter_list）")
+    return ti[0]
+
+
 def build_instruction(example):
     """
-    构建 instruction
-    模板: "Implement the function `{function_name}` that takes {parameter_list} to solve:\n\n{question}\n\nOnly output the Python code, no explanation."
+    构建 instruction（Direct / 仅代码 LoRA；与 evaluation 中 Direct 模板一致）。
     """
     question = example["question"].strip()
-    func_name = example["test_info"][0]["function_name"]
-    params = example["test_info"][0]["parameter_list"]
+    ti0 = _first_test_info(example)
+    func_name = ti0.get("function_name") or "solution"
+    params = ti0.get("parameter_list", "")
     
     return f"""Implement the function `{func_name}` that takes {params} to solve:
 
@@ -84,7 +97,7 @@ Only output the Python code, no explanation."""
 
 
 def build_messages(example):
-    """构建 Qwen ChatML 格式"""
+    """构建 chat messages 列表（由 tokenizer.apply_chat_template 转换为模型所需格式）"""
     instruction = build_instruction(example)
     code = example["solution"].strip()
     
@@ -97,10 +110,10 @@ def build_messages(example):
     return {"messages": messages}
 
 
-def tokenize_function(examples, tokenizer):
+def tokenize_function(examples, tokenizer, max_length: int):
     """
     Tokenize 并设置 labels：仅对 assistant 回复段计算 loss。
-    Qwen2.5 等模板不含 `{% generation %}`，不能使用 return_assistant_tokens_mask；
+    多数基座 chat template 不含 `{% generation %}`，不能直接使用 return_assistant_tokens_mask；
     通过「除最后一条 assistant 外的对话 + add_generation_prompt=True」得到前缀 token 边界。
     """
     messages = examples["messages"]
@@ -112,15 +125,20 @@ def tokenize_function(examples, tokenizer):
         tokenize=True,
         add_generation_prompt=True,
         truncation=True,
-        max_length=MAX_LENGTH,
+        max_length=max_length,
     )
     full_ids = tokenizer.apply_chat_template(
         messages,
         tokenize=True,
         add_generation_prompt=False,
         truncation=True,
-        max_length=MAX_LENGTH,
+        max_length=max_length,
     )
+    # ChatGLM4Tokenizer.apply_chat_template 即使单条输入也返回 batch 格式 [[...]]，扁平化为 flat list
+    if prefix_ids and isinstance(prefix_ids[0], list):
+        prefix_ids = prefix_ids[0]
+    if full_ids and isinstance(full_ids[0], list):
+        full_ids = full_ids[0]
 
     # 前缀与完整序列的公共前缀长度即 assistant 起点（两侧截断策略一致时与 len(prefix_ids) 一致）
     i = 0
@@ -177,14 +195,39 @@ def patch_accelerate_unwrap_model():
 def main():
     patch_accelerate_unwrap_model()
 
+    parser = argparse.ArgumentParser(description="CodeGeeX4 LoRA：仅监督 solution（Direct 模板）")
+    parser.add_argument(
+        "--data-path",
+        type=str,
+        default="",
+        help=f"训练 JSONL 路径；默认 {DATA_PATH}",
+    )
+    parser.add_argument(
+        "--max-length",
+        type=int,
+        default=0,
+        help=f"单条样本 tokenizer 截断上限（默认 {MAX_LENGTH}）；显存紧张可试 768",
+    )
+    args = parser.parse_args()
+
+    data_path = os.path.abspath(args.data_path.strip()) if args.data_path.strip() else DATA_PATH
+    max_length = args.max_length if args.max_length > 0 else MAX_LENGTH
+    if max_length < 256:
+        raise ValueError("--max-length 过小，assistant 段易被完全截断")
+
+    if not os.path.isfile(data_path):
+        raise FileNotFoundError(f"未找到训练数据: {data_path}")
+    if not os.path.isdir(MODEL_PATH):
+        raise FileNotFoundError(f"未找到基座模型目录: {MODEL_PATH}")
+
     # 创建输出目录
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_dir = os.path.join(OUTPUT_ROOT, f"qwen_lora_{timestamp}")
+    output_dir = os.path.join(OUTPUT_ROOT, f"codegeex4_lora_{timestamp}")
     os.makedirs(output_dir, exist_ok=True)
     
     # 1. 加载数据
     print("\n[1/5] 加载数据...")
-    raw_data = load_jsonl(DATA_PATH)
+    raw_data = load_jsonl(data_path)
     
     # 2. 构建消息
     print("[2/5] 构建对话格式...")
@@ -201,10 +244,13 @@ def main():
     
     # 4. 加载模型和分词器
     print("[4/5] 加载模型...")
+    # ChatGLM4Tokenizer._pad 内部硬断言 padding_side == "left"（vendored 代码只实现了 left padding）。
+    # 训练侧用 left padding 与 right padding 在数学上等价：loss 仅在 labels != -100 处计算，
+    # PAD 同时被 attention_mask 屏蔽与 labels=-100 屏蔽，方向不影响梯度。
     tokenizer = AutoTokenizer.from_pretrained(
         MODEL_PATH,
         trust_remote_code=True,
-        padding_side="right",
+        padding_side="left",
     )
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
@@ -238,7 +284,9 @@ def main():
     
     # 6. Tokenize
     print("[5/5] Tokenizing...")
-    tokenize_with_config = lambda x: tokenize_function(x, tokenizer)
+    tokenize_with_config = functools.partial(
+        tokenize_function, tokenizer=tokenizer, max_length=max_length
+    )
     
     train_dataset = train_dataset.map(
         tokenize_with_config,
@@ -277,7 +325,8 @@ def main():
         greater_is_better=False,
         bf16=True,
         gradient_checkpointing=True,
-        report_to="tensorboard",
+        lr_scheduler_type="cosine",
+        report_to="none",
         logging_dir=f"{output_dir}/logs",
         seed=SEED,
         dataloader_num_workers=4,
@@ -313,8 +362,8 @@ def main():
     # 11. 保存配置
     config = {
         "model_path": MODEL_PATH,
-        "data_path": DATA_PATH,
-        "max_length": MAX_LENGTH,
+        "data_path": data_path,
+        "max_length": max_length,
         "lora_r": LORA_R,
         "lora_alpha": LORA_ALPHA,
         "lora_dropout": LORA_DROPOUT,

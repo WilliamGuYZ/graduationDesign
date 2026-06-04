@@ -1,5 +1,5 @@
 """
-Qwen2.5-Coder-7B-Instruct LoRA 微调脚本 —— Few-Shot CoT 版
+CodeGeeX4-ALL-9B LoRA 微调脚本 —— Few-Shot CoT 版
 数据格式: {"question": "...", "solution": "...", "thought_step": "...", "test": "...", "test_info": [...], "tags": [...]}
 
 Few-Shot CoT 训练策略
@@ -8,13 +8,15 @@ Few-Shot CoT 训练策略
     - 模型由此同时学习「先推理后编码」的格式，以及具体的算法知识
 """
 
-import os
+import argparse
+import functools
+import inspect
 import json
+import os
 import random
 import time
-import argparse
-import inspect
 from datetime import datetime
+from typing import Any, Dict, List
 
 import torch
 from datasets import Dataset
@@ -31,28 +33,28 @@ from peft import LoraConfig, get_peft_model
 # ==================== 配置 ====================
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-MODEL_PATH   = os.path.join(PROJECT_ROOT, "models", "Qwen2.5-Coder-7B-Instruct")
+MODEL_PATH   = os.path.join(PROJECT_ROOT, "models", "CodeGeeX4-ALL-9B")
 DATA_PATH    = os.path.join(PROJECT_ROOT, "data", "processed", "KodCode_train.jsonl")
-LATEST_LORA_POINTER = os.path.join(PROJECT_ROOT, "train", "latest_lora_cot_adapter.txt")
 OUTPUT_ROOT  = os.path.join(PROJECT_ROOT, "train", "outputs")
 
-# few-shot 示范数量
+# few-shot 示范数量（实验 C=0，实验 D>0）
 NUM_FEW_SHOTS = 0
 
-MAX_LENGTH = 1024
+MAX_LENGTH = 2048  # 序列上限；CoT zero/few-shot 在 KodCode 上 p95 < 2048；32GB 卡使用 4096 会反向 OOM；如需要可 --max-length 显式覆盖
 
 # LoRA 配置
 LORA_R = 32
 LORA_ALPHA = 64
 LORA_DROPOUT = 0.1
 LORA_TARGET_MODULES = [
-    "q_proj", "k_proj", "v_proj", "o_proj",
-    "gate_proj", "up_proj", "down_proj",
+    "query_key_value",                 # ChatGLM 融合 QKV
+    "dense",                           # attention 输出
+    "dense_h_to_4h", "dense_4h_to_h",  # MLP 两侧
 ]
 
 # 训练配置
-BATCH_SIZE = 4
-GRADIENT_ACCUMULATION = 8
+BATCH_SIZE = 1                 # 单卡 batch；CoT 序列更长（默认 MAX_LENGTH=2048），32GB 卡须保持 1
+GRADIENT_ACCUMULATION = 32     # 等效 batch = 1 * 32 = 32（与 train.py 对齐，可复现性不变）
 LEARNING_RATE = 2e-5
 NUM_EPOCHS = 3
 WARMUP_RATIO = 0.03
@@ -75,11 +77,19 @@ def load_jsonl(path):
     return data
 
 
+def _first_test_info(example: Dict[str, Any]) -> Dict[str, Any]:
+    ti = example.get("test_info")
+    if not ti or not isinstance(ti, list) or not isinstance(ti[0], dict):
+        raise ValueError("样本缺少有效的 test_info[0]（需含 function_name、parameter_list）")
+    return ti[0]
+
+
 def build_instruction(example):
-    """构建用户侧 instruction（与 train.py 保持一致）。"""
-    question  = example["question"].strip()
-    func_name = example["test_info"][0]["function_name"]
-    params    = example["test_info"][0]["parameter_list"]
+    """构建用户侧 instruction（CoT 版：末尾要求逐步思考再输出代码；与 eval_lora_cot_passk 中题目指令一致）。"""
+    question = example["question"].strip()
+    ti0 = _first_test_info(example)
+    func_name = ti0.get("function_name") or "solution"
+    params = ti0.get("parameter_list", "")
     return (
         f"Implement the function `{func_name}` that takes {params} to solve:\n\n"
         f"{question}\n\n"
@@ -94,6 +104,42 @@ def build_cot_response(example):
     if thought:
         return f"{thought}\n\n```python\n{code}\n```"
     return f"```python\n{code}\n```"
+
+
+def _as_str_list(v: Any) -> List[str]:
+    if isinstance(v, list):
+        return [str(x).strip() for x in v if str(x).strip()]
+    return []
+
+
+def _few_shot_score(target: Dict[str, Any], cand: Dict[str, Any]) -> int:
+    """与 evaluation/eval_lora_cot_passk.py 共享评分：强标签权重 2，普通标签权重 1。"""
+    t_strong = set(_as_str_list(target.get("strong_tags")))
+    c_strong = set(_as_str_list(cand.get("strong_tags")))
+    t_tags   = set(_as_str_list(target.get("tags")))
+    c_tags   = set(_as_str_list(cand.get("tags")))
+    return 2 * len(t_strong & c_strong) + len(t_tags & c_tags)
+
+
+def _select_few_shots_train(example: Dict[str, Any], pool: List[Dict[str, Any]], k: int) -> List[Dict[str, Any]]:
+    """
+    训练侧 few-shot 选池，与 4.3.1 (4) / 4.4.2 (1) 一致：
+      1. 候选 = pool 扣除目标题；
+      2. 按 score 降序；
+      3. 取前 max(k, 4k) 作候选池；
+      4. 池内 random.sample(k) 做随机性。
+    """
+    if k <= 0:
+        return []
+    candidates = [e for e in pool if e.get("question") != example.get("question")]
+    if not candidates:
+        return []
+    scored = sorted(candidates, key=lambda x: _few_shot_score(example, x), reverse=True)
+    pool_size = min(len(scored), max(k, 4 * k))
+    top_pool  = scored[:pool_size]
+    if len(top_pool) <= k:
+        return top_pool
+    return random.sample(top_pool, k)
 
 
 def build_few_shot_messages(example, pool, num_few_shots: int):
@@ -118,9 +164,8 @@ def build_few_shot_messages(example, pool, num_few_shots: int):
         }
     ]
 
-    # 从 pool 中随机抽取 few-shot 示范（排除自身）
-    candidates = [e for e in pool if e["question"] != example["question"]]
-    shots = random.sample(candidates, min(num_few_shots, len(candidates)))
+    # 按强标签评分选池后再随机抽取（与评测侧 _few_shot_score 共享评分函数）
+    shots = _select_few_shots_train(example, pool, num_few_shots)
 
     for shot in shots:
         messages.append({"role": "user",      "content": build_instruction(shot)})
@@ -133,7 +178,7 @@ def build_few_shot_messages(example, pool, num_few_shots: int):
     return {"messages": messages}
 
 
-def tokenize_function(examples, tokenizer):
+def tokenize_function(examples, tokenizer, max_length: int):
     """
     Tokenize 并设置 labels：仅对最后一条 assistant 回复段计算 loss。
     前缀（system + few-shot turns + user query）全部标记为 -100。
@@ -147,15 +192,20 @@ def tokenize_function(examples, tokenizer):
         tokenize=True,
         add_generation_prompt=True,
         truncation=True,
-        max_length=MAX_LENGTH,
+        max_length=max_length,
     )
     full_ids = tokenizer.apply_chat_template(
         messages,
         tokenize=True,
         add_generation_prompt=False,
         truncation=True,
-        max_length=MAX_LENGTH,
+        max_length=max_length,
     )
+    # ChatGLM4Tokenizer.apply_chat_template 即使单条输入也返回 batch 格式 [[...]]，扁平化为 flat list
+    if prefix_ids and isinstance(prefix_ids[0], list):
+        prefix_ids = prefix_ids[0]
+    if full_ids and isinstance(full_ids[0], list):
+        full_ids = full_ids[0]
 
     # 定位 assistant 回复的起点
     i, lim = 0, min(len(prefix_ids), len(full_ids))
@@ -164,25 +214,10 @@ def tokenize_function(examples, tokenizer):
     assistant_start = i
 
     labels = (
-        list(full_ids)
+        [-100] * len(full_ids)
         if assistant_start >= len(full_ids)
         else [-100] * assistant_start + full_ids[assistant_start:]
     )
-
-    # #region agent log - B: 检测序列截断
-    import json as _j, time as _t, os as _o
-    _DBG_LOG_T = "/home/ubuntu/yejunyin/graduationDesign/.cursor/debug-fc880c.log"
-    _is_truncated = len(full_ids) >= MAX_LENGTH
-    _train_token_ratio = (len(full_ids) - assistant_start) / len(full_ids) if full_ids else 0
-    if not hasattr(tokenize_function, "_log_count"):
-        tokenize_function._log_count = 0
-    if tokenize_function._log_count < 10:
-        tokenize_function._log_count += 1
-        _o.makedirs(_o.path.dirname(_DBG_LOG_T), exist_ok=True)
-        _entry = _j.dumps({"sessionId":"fc880c","timestamp":int(_t.time()*1000),"location":"train_cot.py:tokenize","message":"tokenize_sample","data":{"full_len":len(full_ids),"max_length":MAX_LENGTH,"is_truncated":_is_truncated,"assistant_start":assistant_start,"train_tokens":len(full_ids)-assistant_start,"train_ratio":round(_train_token_ratio,3)},"hypothesisId":"B"})
-        with open(_DBG_LOG_T, "a") as _f:
-            _f.write(_entry + "\n")
-    # #endregion
 
     return {
         "input_ids":      full_ids,
@@ -191,12 +226,22 @@ def tokenize_function(examples, tokenizer):
     }
 
 
-def save_latest_adapter_path(adapter_path):
-    os.makedirs(os.path.dirname(LATEST_LORA_POINTER), exist_ok=True)
-    with open(LATEST_LORA_POINTER, "w", encoding="utf-8") as f:
+def _lora_pointer_file(num_few_shots: int) -> str:
+    if num_few_shots == 0:
+        filename = "latest_lora_cot_zs_adapter.txt"
+    else:
+        filename = f"latest_lora_cot_fs{num_few_shots}_adapter.txt"
+    return os.path.join(PROJECT_ROOT, "train", filename)
+
+
+def save_latest_adapter_path(adapter_path: str, num_few_shots: int) -> str:
+    pointer_file = _lora_pointer_file(num_few_shots)
+    os.makedirs(os.path.dirname(pointer_file), exist_ok=True)
+    with open(pointer_file, "w", encoding="utf-8") as f:
         f.write(adapter_path + "\n")
-    print(f"已保存最新适配器路径: {LATEST_LORA_POINTER}")
+    print(f"已保存最新适配器路径: {pointer_file}")
     print(f"路径内容: {adapter_path}")
+    return pointer_file
 
 
 def patch_accelerate_unwrap_model():
@@ -231,20 +276,44 @@ def main():
         default=NUM_FEW_SHOTS,
         help=f"每条样本前插入 few-shot 示例数（默认: {NUM_FEW_SHOTS}）",
     )
+    parser.add_argument(
+        "--data-path",
+        type=str,
+        default="",
+        help=f"训练 JSONL 路径；默认 {DATA_PATH}",
+    )
+    parser.add_argument(
+        "--max-length",
+        type=int,
+        default=0,
+        help=f"单条样本 tokenizer 截断上限（默认 {MAX_LENGTH}）；显存不足可试 2048",
+    )
     args = parser.parse_args()
     if args.num_few_shots < 0:
         raise ValueError("--num-few-shots 不能为负数")
     num_few_shots = args.num_few_shots
 
+    data_path = os.path.abspath(args.data_path.strip()) if args.data_path.strip() else DATA_PATH
+    max_length = args.max_length if args.max_length > 0 else MAX_LENGTH
+    if max_length < 512:
+        raise ValueError("--max-length 过小，few-shot CoT 易被截断为无效 labels")
+
+    if not os.path.isfile(data_path):
+        raise FileNotFoundError(f"未找到训练数据: {data_path}")
+    if not os.path.isdir(MODEL_PATH):
+        raise FileNotFoundError(f"未找到基座模型目录: {MODEL_PATH}")
+    mode_name = "CoT zero-shot (shots=0)" if num_few_shots == 0 else f"CoT few-shot (shots={num_few_shots})"
+    training_mode = "cot_zero_shot" if num_few_shots == 0 else "cot_few_shot"
+
     random.seed(SEED)
 
     timestamp  = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_dir = os.path.join(OUTPUT_ROOT, f"qwen_lora_cot_{timestamp}")
+    output_dir = os.path.join(OUTPUT_ROOT, f"codegeex4_lora_{training_mode}_{timestamp}")
     os.makedirs(output_dir, exist_ok=True)
 
     # 1. 加载数据
     print("\n[1/5] 加载数据...")
-    raw_data = load_jsonl(DATA_PATH)
+    raw_data = load_jsonl(data_path)
 
     # 过滤掉 thought_step 为空的条目（标注失败）
     before = len(raw_data)
@@ -252,7 +321,7 @@ def main():
     print(f"过滤空 thought_step：{before} → {len(raw_data)} 条")
 
     # 2. 构建 few-shot 消息
-    print("[2/5] 构建 Few-Shot CoT 对话格式...")
+    print(f"[2/5] 构建对话格式（{mode_name}）...")
     formatted_data = [build_few_shot_messages(item, raw_data, num_few_shots) for item in raw_data]
     dataset = Dataset.from_list(formatted_data)
 
@@ -266,10 +335,13 @@ def main():
 
     # 4. 加载模型和分词器
     print("[4/5] 加载模型...")
+    # ChatGLM4Tokenizer._pad 内部硬断言 padding_side == "left"（vendored 代码只实现了 left padding）。
+    # 训练侧用 left padding 与 right padding 在数学上等价：loss 仅在 labels != -100 处计算，
+    # PAD 同时被 attention_mask 屏蔽与 labels=-100 屏蔽，方向不影响梯度。
     tokenizer = AutoTokenizer.from_pretrained(
         MODEL_PATH,
         trust_remote_code=True,
-        padding_side="right",
+        padding_side="left",
     )
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
@@ -302,7 +374,9 @@ def main():
 
     # 6. Tokenize
     print("[5/5] Tokenizing...")
-    tokenize_with_config = lambda x: tokenize_function(x, tokenizer)
+    tokenize_with_config = functools.partial(
+        tokenize_function, tokenizer=tokenizer, max_length=max_length
+    )
 
     train_dataset = train_dataset.map(
         tokenize_with_config,
@@ -340,7 +414,8 @@ def main():
         greater_is_better=False,
         bf16=True,
         gradient_checkpointing=True,
-        report_to="tensorboard",
+        lr_scheduler_type="cosine",
+        report_to="none",
         logging_dir=f"{output_dir}/logs",
         seed=SEED,
         dataloader_num_workers=4,
@@ -359,7 +434,7 @@ def main():
     )
 
     # 8. 训练
-    print("\n开始训练（Few-Shot CoT）...")
+    print(f"\n开始训练（{mode_name}）...")
     start_time = time.time()
     trainer.train()
     train_time = time.time() - start_time
@@ -371,15 +446,15 @@ def main():
     print(f"\nLoRA 适配器保存至: {adapter_path}")
 
     # 10. 保存 latest_lora_adapter.txt
-    save_latest_adapter_path(adapter_path)
+    pointer_file = save_latest_adapter_path(adapter_path, num_few_shots)
 
     # 11. 保存配置
     config = {
-        "training_mode": "few_shot_cot",
+        "training_mode": training_mode,
         "num_few_shots": num_few_shots,
         "model_path": MODEL_PATH,
-        "data_path": DATA_PATH,
-        "max_length": MAX_LENGTH,
+        "data_path": data_path,
+        "max_length": max_length,
         "lora_r": LORA_R,
         "lora_alpha": LORA_ALPHA,
         "lora_dropout": LORA_DROPOUT,
@@ -399,13 +474,13 @@ def main():
 
     # 12. 打印总结
     print("\n" + "=" * 60)
-    print("训练完成！（Few-Shot CoT）")
+    print(f"训练完成！（{mode_name}）")
     print("=" * 60)
     print(f"Few-Shot 示范数: {num_few_shots}")
     print(f"训练耗时: {train_time / 60:.2f} 分钟")
     print(f"输出目录: {output_dir}")
     print(f"LoRA 适配器: {adapter_path}")
-    print(f"最新适配器指针: {LATEST_LORA_POINTER}")
+    print(f"最新适配器指针: {pointer_file}")
     print("=" * 60)
 
 

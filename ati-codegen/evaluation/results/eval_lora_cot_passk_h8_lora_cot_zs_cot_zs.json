@@ -1,0 +1,20 @@
+{
+  "timestamp": "2026-05-22_17-05-18",
+  "mode": "two_stage_cot",
+  "use_lora": true,
+  "lora_path": "train/outputs/2026-05-22_lora_cot_zs/lora_adapter",
+  "num_problems": 1000,
+  "num_samples": 10,
+  "few_shot_k": 0,
+  "batch_size": 4,
+  "pass_at_k": {
+    "pass@1": 0.6390,
+    "pass@5": 0.7660,
+    "pass@10": 0.8150
+  },
+  "generation_stats": {
+    "empty_reasoning": 4,
+    "empty_code": 2,
+    "timeouts": 31
+  }
+}

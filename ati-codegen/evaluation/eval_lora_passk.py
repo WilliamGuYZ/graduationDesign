@@ -1,8 +1,13 @@
 """
-Qwen2.5-Coder-7B-Instruct + LoRA 评估脚本
+CodeGeeX4-ALL-9B + LoRA 评估脚本（单阶段 Direct 推理）
 数据格式: {"question": "...", "solution": "...", "thought_step": "...", "test": "...", "test_info": [...], "tags": [...]}
+
+实验矩阵中承担：
+  - G7：LoRA_code + Direct   （默认，读 latest_lora_adapter.txt）
+  - G4：LoRA_cot  + Direct   （通过 --lora-path 指向 cot 适配器）
 """
 
+import argparse
 import gc
 import json
 import os
@@ -21,8 +26,6 @@ from typing import Any, Dict, List, Optional, Tuple
 os.environ["VLLM_LOGGING_LEVEL"] = "ERROR"
 os.environ["VLLM_NO_USAGE_STATS"] = "1"
 os.environ["VLLM_LOGGING_PREFIX"] = ""
-# 兼容旧 GPU / Triton：默认禁用 vLLM V1，避免 LoRA Triton kernel 编译失败
-os.environ.setdefault("VLLM_USE_V1", "0")
 
 import logging
 
@@ -34,7 +37,7 @@ warnings.filterwarnings("ignore")
 from tqdm import tqdm
 from vllm import LLM, SamplingParams
 from vllm.lora.request import LoRARequest
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoTokenizer
 
 # =========================
 # CONFIG
@@ -45,7 +48,7 @@ _PROJECT_ROOT = os.path.dirname(_HERE)
 _SCRIPTS = os.path.join(_PROJECT_ROOT, "scripts")
 LORA_POINTER_FILE = os.path.join(_PROJECT_ROOT, "train", "latest_lora_adapter.txt")
 
-MODEL_PATH   = os.path.join(_PROJECT_ROOT, "models", "Qwen2.5-Coder-7B-Instruct")
+MODEL_PATH   = os.path.join(_PROJECT_ROOT, "models", "CodeGeeX4-ALL-9B")
 DATASET_PATH = os.path.join(_PROJECT_ROOT, "data", "processed", "KodCode_eval.jsonl")
 RESULTS_DIR  = os.path.join(_PROJECT_ROOT, "evaluation", "results")
 
@@ -56,7 +59,6 @@ TEMPERATURE = 0.3
 
 VLLM_MAX_MODEL_LEN     = 2048
 GPU_MEMORY_UTILIZATION = 0.9
-HF_BATCH_SIZE = 2
 
 SAMPLE_LIMIT: Optional[int] = None
 
@@ -78,6 +80,11 @@ def pass_at_k(n: int, c: int, k: int) -> float:
 
 
 def _read_lora_adapter_dir() -> str:
+    if not os.path.isfile(LORA_POINTER_FILE):
+        raise FileNotFoundError(
+            f"未找到 LoRA 指针文件: {LORA_POINTER_FILE}。\n"
+            f"请先运行 train/train.py，或使用 --lora-path 显式指定适配器目录。"
+        )
     with open(LORA_POINTER_FILE, "r", encoding="utf-8") as f:
         line = f.readline().strip()
     return os.path.abspath(line)
@@ -115,66 +122,6 @@ def get_parameter_list(test_info: List[Dict]) -> str:
     if test_info and len(test_info) > 0:
         return test_info[0].get("parameter_list", "")
     return ""
-
-
-def generate_with_hf_lora(
-    prompts: List[str],
-    tokenizer: AutoTokenizer,
-    lora_path: str,
-) -> List[str]:
-    """
-    vLLM 不可用时，回退到 Transformers + PEFT 生成。
-    """
-    from peft import PeftModel
-    import torch
-
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    dtype = torch.float16 if device == "cuda" else torch.float32
-
-    base_model = AutoModelForCausalLM.from_pretrained(
-        MODEL_PATH,
-        trust_remote_code=True,
-        torch_dtype=dtype,
-        device_map="auto" if device == "cuda" else None,
-    )
-    model = PeftModel.from_pretrained(base_model, lora_path)
-    model.eval()
-    if device != "cuda":
-        model.to(device)
-
-    generations: List[str] = []
-    for i in tqdm(range(0, len(prompts), HF_BATCH_SIZE), desc="HF 生成"):
-        batch = prompts[i : i + HF_BATCH_SIZE]
-        encoded = tokenizer(
-            batch,
-            return_tensors="pt",
-            padding=True,
-            truncation=True,
-            max_length=VLLM_MAX_MODEL_LEN,
-        )
-        encoded = {k: v.to(model.device) for k, v in encoded.items()}
-        input_len = encoded["input_ids"].shape[1]
-
-        with torch.no_grad():
-            out = model.generate(
-                **encoded,
-                do_sample=True,
-                temperature=TEMPERATURE,
-                top_p=0.95,
-                top_k=50,
-                max_new_tokens=MAX_TOKENS,
-                pad_token_id=tokenizer.pad_token_id,
-                eos_token_id=tokenizer.eos_token_id,
-            )
-
-        new_tokens = out[:, input_len:]
-        texts = tokenizer.batch_decode(new_tokens, skip_special_tokens=True)
-        generations.extend(texts)
-
-    del model
-    del base_model
-    gc.collect()
-    return generations
 
 
 # =========================
@@ -263,8 +210,33 @@ def execute_test_with_debug(
 
 
 def main():
+    parser = argparse.ArgumentParser(description="LoRA 单阶段 Direct 评测（pass@k）")
+    parser.add_argument(
+        "--lora-path",
+        type=str,
+        default="",
+        help="显式指定 LoRA 适配器路径；不传时读 latest_lora_adapter.txt",
+    )
+    parser.add_argument(
+        "--result-suffix",
+        type=str,
+        default="",
+        help="结果文件后缀，用于区分 G4/G7 等不同组",
+    )
+    args = parser.parse_args()
+
+    if not os.path.isdir(MODEL_PATH):
+        raise FileNotFoundError(f"未找到基座模型目录: {MODEL_PATH}")
+    if not os.path.isfile(DATASET_PATH):
+        raise FileNotFoundError(f"未找到数据文件: {DATASET_PATH}")
+
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    lora_path = _read_lora_adapter_dir()
+    if args.lora_path.strip():
+        lora_path = os.path.abspath(args.lora_path.strip())
+    else:
+        lora_path = _read_lora_adapter_dir()
+    if not os.path.isdir(lora_path):
+        raise FileNotFoundError(f"LoRA 适配器路径不是有效目录: {lora_path}")
 
     print("=" * 60)
     print("加载 Tokenizer...")
@@ -288,7 +260,6 @@ def main():
         trust_remote_code=True,
         gpu_memory_utilization=GPU_MEMORY_UTILIZATION,
         max_model_len=VLLM_MAX_MODEL_LEN,
-        enforce_eager=True,
         enable_lora=True,
         max_lora_rank=32,
     )
@@ -299,28 +270,22 @@ def main():
     ):
         _llm_kwargs["tokenizer"] = lora_path
 
-    backend = "vllm"
-    llm = None
-    lora_request = None
-    sampling_params = None
-    try:
-        llm = LLM(**_llm_kwargs)
-        lora_request = LoRARequest(
-            lora_name="eval_adapter",
-            lora_int_id=1,
-            lora_path=lora_path,
-        )
-        sampling_params = SamplingParams(
-            temperature=TEMPERATURE,
-            max_tokens=MAX_TOKENS,
-            top_p=0.95,
-            top_k=50,
-            stop=None,
-        )
-    except Exception as e:
-        backend = "hf_peft_fallback"
-        print("⚠️ vLLM + LoRA 初始化失败，自动回退到 Transformers+PEFT 评测。")
-        print(f"失败原因: {str(e)[:240]}...")
+    llm = LLM(**_llm_kwargs)
+
+    lora_request = LoRARequest(
+        lora_name="eval_adapter",
+        lora_int_id=1,
+        lora_path=lora_path,
+    )
+
+    sampling_params = SamplingParams(
+        n=NUM_SAMPLES,              # 一个 prompt 内部采样 NUM_SAMPLES 次，相比外层复制 prompt 效率高 2-4×
+        temperature=TEMPERATURE,
+        max_tokens=MAX_TOKENS,
+        top_p=0.95,
+        top_k=50,
+        stop=None,
+    )
 
     print("\n" + "=" * 60)
     print("加载数据集...")
@@ -397,25 +362,20 @@ def main():
         prompt = build_chat_prompt(
             tokenizer, data["question"], data["func_name"], data["params"]
         )
-        for _ in range(NUM_SAMPLES):
-            all_prompts.append(prompt)
-            prompt_to_problem_idx.append(idx)
+        all_prompts.append(prompt)
+        prompt_to_problem_idx.append(idx)
 
-    print(f"总生成请求: {len(all_prompts)} 个")
+    print(f"总生成请求: {len(all_prompts)} 个 × n={NUM_SAMPLES} samples/prompt")
 
     print("\n" + "=" * 60)
     print("开始生成（LoRA）...")
     print("=" * 60)
 
-    if backend == "vllm":
-        outputs = llm.generate(
-            all_prompts,
-            sampling_params,
-            lora_request=lora_request,
-        )
-        generated_texts = [o.outputs[0].text for o in outputs]
-    else:
-        generated_texts = generate_with_hf_lora(all_prompts, tokenizer, lora_path)
+    outputs = llm.generate(
+        all_prompts,
+        sampling_params,
+        lora_request=lora_request,
+    )
 
     print("\n" + "=" * 60)
     print("评估中...")
@@ -424,19 +384,23 @@ def main():
     problem_results: List[List[bool]] = [[] for _ in range(len(dataset))]
     timeout_count = 0
 
-    for data_idx, generated in tqdm(
-        zip(prompt_to_problem_idx, generated_texts), total=len(all_prompts)
-    ):
-        code = extract_code(generated)
-        passed, error, _, _, _ = execute_test_with_debug(
-            code, dataset[data_idx]["test_code"], dataset[data_idx]["func_name"], data_idx
-        )
-        if error and "超时" in str(error):
-            timeout_count += 1
-        problem_results[data_idx].append(passed)
+    total_samples = len(all_prompts) * NUM_SAMPLES
+    pbar = tqdm(total=total_samples)
+    for data_idx, output in zip(prompt_to_problem_idx, outputs):
+        for completion in output.outputs:      # n=NUM_SAMPLES 时每个 output 带 NUM_SAMPLES 条 completion
+            generated = completion.text
+            code = extract_code(generated)
+            passed, error, _, _, _ = execute_test_with_debug(
+                code, dataset[data_idx]["test_code"], dataset[data_idx]["func_name"], data_idx
+            )
+            if error and "超时" in str(error):
+                timeout_count += 1
+            problem_results[data_idx].append(passed)
+            pbar.update(1)
+    pbar.close()
 
     if timeout_count:
-        print(f"\n⚠️ 超时: {timeout_count}/{len(all_prompts)} 次 ({timeout_count/len(all_prompts)*100:.1f}%)")
+        print(f"\n⚠️ 超时: {timeout_count}/{total_samples} 次 ({timeout_count/total_samples*100:.1f}%)")
 
     # ── pass@k（无偏估计）────────────────────────────────────────────────────
     K_LIST         = [1, 5, 10]
@@ -459,7 +423,6 @@ def main():
     print(f"温度参数:            {TEMPERATURE}")
     print(f"测试超时:            {TIMEOUT} 秒")
     print(f"LoRA 路径:           {lora_path}")
-    print(f"推理后端:            {backend}")
     print("-" * 60)
     for k in K_LIST:
         v = results_passk[k]
@@ -471,8 +434,8 @@ def main():
 
     os.makedirs(RESULTS_DIR, exist_ok=True)
 
-    # 最终输出文件（固定文件名，每次运行覆盖）
-    output_file = os.path.join(RESULTS_DIR, "eval_lora_passk.json")
+    suffix = f"_{args.result_suffix.strip()}" if args.result_suffix.strip() else ""
+    output_file = os.path.join(RESULTS_DIR, f"eval_lora_passk{suffix}.json")
 
     # 构建结果字典（只包含 summary）
     results = {
@@ -482,7 +445,6 @@ def main():
         "num_samples": NUM_SAMPLES,
         "temperature": TEMPERATURE,
         "timeout": TIMEOUT,
-        "backend": backend,
         "pass_at_k": {f"pass@{k}": round(results_passk[k], 4) for k in K_LIST},
         "original_solution_pass_rate": round(solution_pass_count / n_ds, 4) if n_ds else 0,
     }
@@ -492,8 +454,7 @@ def main():
         json.dump(results, f, indent=2, ensure_ascii=False)
 
     print(f"\n结果已保存至: {output_file}")
-    if llm is not None:
-        del llm
+    del llm
     gc.collect()
 
 

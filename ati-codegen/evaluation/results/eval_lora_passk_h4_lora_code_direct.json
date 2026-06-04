@@ -1,0 +1,14 @@
+{
+  "timestamp": "2026-05-22_13-18-09",
+  "dataset": "data/processed/KodCode_eval.jsonl",
+  "num_problems": 1000,
+  "num_samples": 10,
+  "temperature": 0.3,
+  "timeout": 5,
+  "pass_at_k": {
+    "pass@1": 0.6050,
+    "pass@5": 0.7380,
+    "pass@10": 0.7890
+  },
+  "original_solution_pass_rate": 0.9960
+}

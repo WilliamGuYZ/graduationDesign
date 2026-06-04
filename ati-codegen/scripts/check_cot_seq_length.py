@@ -12,7 +12,7 @@ from tqdm import tqdm
 # ==================== 配置 ====================
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-MODEL_PATH = os.path.join(PROJECT_ROOT, "models", "Qwen2.5-Coder-7B-Instruct")
+MODEL_PATH = os.path.join(PROJECT_ROOT, "models", "CodeGeeX4-ALL-9B")
 DATA_PATH = os.path.join(PROJECT_ROOT, "data", "processed", "KodCode_train.jsonl")
 
 # 测试不同的 few-shot 数量
@@ -87,7 +87,12 @@ def analyze(data, tokenizer, num_shots, max_samples=500):
         
         full_ids = tokenizer.apply_chat_template(messages, tokenize=True, add_generation_prompt=False)
         prefix_ids = tokenizer.apply_chat_template(messages[:-1], tokenize=True, add_generation_prompt=True)
-        
+        # ChatGLM4Tokenizer.apply_chat_template 即使单条输入也返回 batch 格式 [[...]]，扁平化为 flat list
+        if full_ids and isinstance(full_ids[0], list):
+            full_ids = full_ids[0]
+        if prefix_ids and isinstance(prefix_ids[0], list):
+            prefix_ids = prefix_ids[0]
+
         full_len = len(full_ids)
         prefix_len = len(prefix_ids)
         assistant_len = full_len - prefix_len

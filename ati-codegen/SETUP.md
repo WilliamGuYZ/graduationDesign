@@ -1,11 +1,11 @@
-## ati-codegen — 基于大语言模型的算法代码生成（毕业设计）
+## ati-codegen — 基于 CodeGeeX4-ALL-9B 的算法代码生成（毕业设计）
 
-对 **Qwen2.5-Coder-7B-Instruct** 基座模型进行 **LoRA 微调**，提升其算法代码生成能力，并使用 **pass@k** 指标进行定量评测。
+对 **CodeGeeX4-ALL-9B** 基座模型进行 **LoRA 微调**，提升其算法代码生成能力，并使用 **pass@k** 指标进行定量评测。
 
 ### 技术要点
 
-- **基座模型**：Qwen2.5-Coder-7B-Instruct
-- **微调方法**：LoRA（PEFT），r=32, alpha=64，目标模块 q/k/v/o/gate/up/down_proj
+- **基座模型**：CodeGeeX4-ALL-9B
+- **微调方法**：LoRA（PEFT），r=32, alpha=64, dropout=0.1，目标模块 query_key_value / dense / dense_h_to_4h / dense_4h_to_h
 - **数据集**：KodCode（10,000 条经代码验证的编程题，含 question/solution/test/test_info）
 - **推理引擎**：vLLM（高效批量推理）
 - **评测指标**：pass@k（k=1, 5, 10），通过子进程执行生成代码 + 测试用例验证
@@ -16,31 +16,38 @@
 ati-codegen/
 ├── data/
 │   ├── raw/                           # 原始数据
-│   │   ├── KodCode.parquet            #   KodCode 原始 Parquet
-│   │   ├── KodCode.jsonl              #   转换并验证后的 JSONL
-│   │   └── mbpp.jsonl                 #   MBPP 数据集（备用）
+│   │   ├── KodCode.jsonl              #   转换并验证后的 JSONL（Git LFS）
+│   │   ├── KodCode_with_thought.jsonl #   含 thought_step 的中间文件
+│   │   └── KodCode_annotate.jsonl     #   含 thought_step + tags 的完整标注
 │   └── processed/                     # 处理后数据
-│       ├── KodCode_train.jsonl        #   训练集（90%）
-│       └── KodCode_eval.jsonl         #   评测集（10%）
+│       ├── KodCode_train.jsonl        #   训练集（≈9000 条）
+│       └── KodCode_eval.jsonl         #   评测集（1000 条）
 ├── scripts/                           # 数据处理与工具脚本
 │   ├── convet_KodCode_to_jsonl.py     #   Parquet → JSONL + 代码验证
+│   ├── validate_code_with_test.py     #   代码正确性验证（数据与评测共用）
+│   ├── annotate_thought_steps.py      #   可选：生成 thought_step
+│   ├── annotate_algorithm_tags.py     #   可选：打算法标签（tags）
 │   ├── split_train_eval.py            #   训练/评测集划分
-│   ├── check_max_seq_length.py        #   Token 长度统计
-│   ├── validate_code_with_test.py     #   代码正确性验证
-│   └── train_eval.sh                  #   一键全流程脚本
+│   ├── check_max_seq_length.py        #   Token 长度统计（Direct 模板）
+│   ├── check_cot_seq_length.py        #   Token 长度统计（CoT 模板）
+│   ├── check_KodCode_sample.py        #   数据集样本检查
+│   └── train_eval.sh                  #   一键全流程脚本（H1~H10）
 ├── train/                             # 训练相关
-│   ├── train.py                       #   LoRA 微调主脚本
-│   ├── latest_lora_adapter.txt        #   最新适配器路径指针
+│   ├── train.py                       #   LoRA_code 微调（仅监督 solution）
+│   ├── train_cot.py                   #   LoRA_cot_zs / LoRA_cot_fs(k) 微调
+│   ├── latest_lora_adapter.txt        #   LoRA_code 适配器路径指针
+│   ├── latest_lora_cot_zs_adapter.txt #   LoRA_cot_zs 适配器路径指针
 │   └── outputs/                       #   训练输出（.gitignore 排除）
 ├── evaluation/                        # 评测相关
-│   ├── eval_base_passk.py             #   基座模型 pass@k 评测
-│   ├── eval_lora_passk.py             #   LoRA 模型 pass@k 评测
-│   └── results/                       #   评测结果
-│       ├── eval_base_passk.txt
-│       └── eval_lora_passk.txt
-├── models/                            # 本地模型权重（.gitignore 排除）
-│   └── Qwen2.5-Coder-7B-Instruct/
+│   ├── eval_base_passk.py             #   基座模型 pass@k 评测（H1）
+│   ├── eval_lora_passk.py             #   LoRA + Direct 评测（H4/H7/H9）
+│   ├── eval_lora_cot_passk.py         #   CoT 两阶段评测（H2/H3/H5/H6/H8/H10）
+│   └── results/                       #   评测结果（.json）
+├── models/                            #   本地模型权重（.gitignore 排除）
+│   └── CodeGeeX4-ALL-9B/
 ├── requirements.txt
+├── conda_qwen_coder_backup.yml        #   Conda 环境备份（快速恢复用）
+├── SETUP.md
 └── README.md
 ```
 
@@ -64,7 +71,7 @@ ati-codegen/
 
 ### 为什么需要 Linux + NVIDIA GPU
 
-本项目涉及大语言模型（7B 参数）的 LoRA 微调和 vLLM 批量推理，这两个核心环节对操作系统和硬件有硬性要求：
+本项目涉及大语言模型（9B 参数）的 LoRA 微调和 vLLM 批量推理，这两个核心环节对操作系统和硬件有硬性要求：
 
 #### 为什么必须用 Linux
 
@@ -84,7 +91,7 @@ ati-codegen/
 
 | 环节                | GPU 需求  | 说明                                                                                                                               |
 | ----------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| **LoRA 微调**       | 必须      | 7B 参数模型即使使用 LoRA（仅训练约 1% 参数），模型本体仍需全部加载到显存中做前向/反向传播。FP16 下模型约占 14GB 显存，加上梯度和优化器状态，至少需要 16GB+ 显存。纯 CPU 训练理论可行但耗时将从小时级变为天/周级，完全不实际 |
+| **LoRA 微调**       | 必须      | 9B 参数模型即使使用 LoRA（仅训练约 1% 参数），模型本体仍需全部加载到显存中做前向/反向传播。FP16 下模型约占 18GB 显存，加上梯度和优化器状态，至少需要 24GB+ 显存。纯 CPU 训练理论可行但耗时将从小时级变为天/周级，完全不实际 |
 | **vLLM 推理**       | 必须      | vLLM 使用 PagedAttention 等 GPU 优化技术实现高吞吐推理。pass@k 评测需要对 1000 道题各采样 10 次（共 10,000 次推理），GPU 推理约 20-40 分钟完成，CPU 推理可能需要数天              |
 | **为什么必须是 NVIDIA** | CUDA 生态 | PyTorch、vLLM、Flash Attention 等核心依赖均基于 NVIDIA CUDA 构建。AMD ROCm 和 Intel oneAPI 的支持尚不成熟，vLLM 对非 NVIDIA GPU 的支持非常有限                  |
 
@@ -333,7 +340,30 @@ python3 -c "import vllm; print(f'vLLM {vllm.__version__}')"
 - 若服务器 CUDA、驱动、系统包版本差异较大，仍可能需要微调个别包版本。  
 - 恢复成功后，建议回到常规流程维护 `requirements.txt`，避免长期依赖历史快照。
 
-若你服务器不能使用 `cu128`，请把 `requirements.txt` 第一行 `--extra-index-url` 改为对应 CUDA 源（如 `cu121` / `cu118`），再重新执行上面的第 3 步。
+**5.2（推荐）把当前环境导出为 yml 备份**
+
+当你已经在服务器上把环境调通（能正常训练/评测）后，建议立刻导出一份 yml 到仓库，便于后续复现或应急恢复。
+
+```bash
+cd ~/yejunyin/graduationDesign/ati-codegen
+conda activate ~/yejunyin/conda-envs/qwen-coder
+
+# 方式 A：导出“精简可迁移”版本（推荐提交到仓库）
+# 仅记录你显式安装的 conda 包，文件更干净，跨机器更稳
+conda env export -p ~/yejunyin/conda-envs/qwen-coder --from-history | grep -v "^prefix: " > conda_qwen_coder_backup.yml
+
+# 方式 B：导出“完整锁定”版本（用于同机/同系统精确回滚）
+# 会包含大量精确版本与构建号，可重复性更强但跨机器兼容性更差
+conda env export -p ~/yejunyin/conda-envs/qwen-coder --no-builds | grep -v "^prefix: " > conda_qwen_coder_lock.yml
+```
+
+建议：
+- 日常协作优先维护 `requirements.txt`，`conda_qwen_coder_backup.yml` 作为“可运行快照”备用。  
+- 若使用了 `pip install -r requirements.txt` 安装的大量包，导出后请人工检查 `dependencies.pip` 段是否完整。  
+- 每次大版本升级（如 PyTorch/vLLM）后，重新导出一次并在提交说明里标注更新时间。
+
+若安装时报 `No matching distribution found for torch==...+cu...`，说明当前 `pip` 源没有对应 CUDA 后缀 wheel。  
+本项目当前 `requirements.txt` 已使用不带 `+cu` 的标准版本（如 `torch==2.10.0`），请直接执行第 3 步安装；若你需要强制指定 CUDA 变体，再按 PyTorch 官方索引单独安装 `torch/torchaudio/torchvision` 后重试。
 
 若安装时发现 `pip` 仍使用历史镜像（例如 `pip install` 输出里出现 `mirrors.aliyun.com`），再执行以下清理后重试：
 
@@ -398,12 +428,53 @@ cd ~/yejunyin/graduationDesign/ati-codegen
 
 ```bash
 # modelscope 已包含在 requirements.txt 中，无需单独安装
-modelscope download --model Qwen/Qwen2.5-Coder-7B-Instruct --local_dir models/Qwen2.5-Coder-7B-Instruct
+modelscope download --model ZhipuAI/codegeex4-all-9b --local_dir models/CodeGeeX4-ALL-9B
 ```
 
-下载约 14GB。也可使用 `huggingface-cli`（需能访问 Hugging Face）。完成后确认 `models/Qwen2.5-Coder-7B-Instruct/` 下有 `config.json`、`*.safetensors` 等。
+下载约 18GB。也可使用 `huggingface-cli`（需能访问 Hugging Face，仓库 ID `THUDM/codegeex4-all-9b`）。完成后确认 `models/CodeGeeX4-ALL-9B/` 下有 `config.json`、`*.safetensors`、`tokenizer.*` 等；由于 CodeGeeX4 使用自定义 tokenizer 与建模代码，加载时脚本统一开启 `trust_remote_code=True`。
 
-> **路径对齐**：脚本默认读取 `models/Qwen2.5-Coder-7B-Instruct`。若模型放在其他挂载目录，请在 `ati-codegen/models/` 下用 **软链接** 指向真实路径，否则会报 `HFValidationError: Repo id must be in the form ...`。
+##### ⚠️ 下载后必做：CodeGeeX4 × vLLM × LoRA 兼容性预检
+
+CodeGeeX4-ALL-9B 基于 GLM-4-9B 架构走 `trust_remote_code` 路径，vLLM 的 LoRA 加载对该路径支持并非全覆盖；正式跑 H1~H10 前强烈建议先做三步冒烟：
+
+```bash
+cd ~/yejunyin/graduationDesign/ati-codegen
+conda activate ~/yejunyin/conda-envs/qwen-coder
+
+# (1) 验证 target_modules 名称与实际模块匹配（train/train.py、train_cot.py 默认 ["query_key_value","dense","dense_h_to_4h","dense_4h_to_h"]）
+python3 -c "
+from transformers import AutoModelForCausalLM
+m = AutoModelForCausalLM.from_pretrained('models/CodeGeeX4-ALL-9B', trust_remote_code=True)
+names = {n.split('.')[-1] for n,_ in m.named_modules()}
+expected = {'query_key_value','dense','dense_h_to_4h','dense_4h_to_h'}
+print('MATCHED:', expected & names)
+print('MISSING:', expected - names)
+"
+
+# (2a) ⚠️ 兼容性补丁：transformers ≥ 4.45 在调用 _pad() 时会传入 padding_side 关键字，
+#      而 CodeGeeX4-ALL-9B 自带的 tokenization_chatglm.py 的 _pad() 签名未跟进，
+#      首次加载前必须先打补丁，否则 (2b) / 训练 / 评测都会报：
+#         TypeError: ChatGLM4Tokenizer._pad() got an unexpected keyword argument 'padding_side'
+#      本脚本幂等，可重复执行；它会同时修补 models/ 下的源文件与 HF cache 里的副本。
+#
+#      另注：ChatGLM4Tokenizer._pad 内部硬断言 padding_side == "left"，因此 train/train.py
+#      与 train/train_cot.py 已统一改为 padding_side="left"（与 ChatGLM 官方训练设置一致，
+#      使用 attention_mask + labels=-100 的训练流程下与 right padding 数学等价）。
+python3 scripts/patch_chatglm_tokenizer.py
+
+# (2b) 训练侧 tokenizer 长度预检（若 p95 > 2048 → train_cot.py 需配合 --max-length 2560 或 3072；当前 train_cot.py 默认 2048）
+python3 scripts/check_cot_seq_length.py --num-few-shots 0
+python3 scripts/check_cot_seq_length.py --num-few-shots 2
+
+# (3) vLLM + LoRA 最小加载冒烟：先跑 H4（LoRA_code + Direct），少量题验证能否正常走完
+#    冒烟前把 evaluation/eval_lora_passk.py 顶部 SAMPLE_LIMIT 改为 5，NUM_SAMPLES 改为 2
+python3 train/train.py                                    # 跑 1~2 步产出可用 adapter
+python3 evaluation/eval_lora_passk.py                     # 若报 LoRA 不兼容 → 记 issue，改基座或换训练方案
+```
+
+三步全部通过再开 `train_eval.sh` 批量跑；任一步报错请在 `issues/` 记录后再推进。
+
+> **路径对齐**：脚本默认读取 `models/CodeGeeX4-ALL-9B`。若模型放在其他挂载目录，请在 `ati-codegen/models/` 下用 **软链接** 指向真实路径，否则会报 `HFValidationError: Repo id must be in the form ...`。
 
 #### 数据准备
 
@@ -427,6 +498,72 @@ bash scripts/train_eval.sh
 # Ctrl+B 后按 D 脱离会话；再次连接：tmux attach -t train
 ```
 
+`train_eval.sh` 负责流程编排；你只需要在脚本顶部手动改开关，再执行：
+
+```bash
+bash scripts/train_eval.sh
+```
+
+`scripts/train_eval.sh` 顶部可手动设置（必要参数）：
+
+**训练开关**（只在首次或需要重训时打开）：
+
+| 参数 | 含义 | 建议 |
+| --- | --- | --- |
+| `RUN_TRAIN_CODE` | 训练 LoRA_code（`train/train.py`） | `1` |
+| `RUN_TRAIN_COT_ZS` | 训练 LoRA_cot_zs（`train_cot.py --num-few-shots 0`） | `1` |
+| `RUN_TRAIN_COT_FS` | 训练 LoRA_cot_fs(k)（`train_cot.py --num-few-shots k`） | `1` |
+| `FS_K` | few-shot 示例数（H3/H6/H9/H10 统一使用） | 常用 `2` |
+
+**评测开关**（H1 ~ H10，按需打开）：
+
+| 参数 | 训练侧 | 推理侧 | 依赖训练 |
+| --- | --- | --- | --- |
+| `RUN_H1` | Base | Direct | 无 |
+| `RUN_H2` | Base | CoT-ZS | 无 |
+| `RUN_H3` | Base | CoT-FS(k) | 无 |
+| `RUN_H4` | LoRA_code | Direct | `RUN_TRAIN_CODE` |
+| `RUN_H5` | LoRA_code | CoT-ZS | `RUN_TRAIN_CODE` |
+| `RUN_H6` | LoRA_code | CoT-FS(k) | `RUN_TRAIN_CODE` |
+| `RUN_H7` | LoRA_cot_zs | Direct | `RUN_TRAIN_COT_ZS` |
+| `RUN_H8` | LoRA_cot_zs | CoT-ZS | `RUN_TRAIN_COT_ZS` |
+| `RUN_H9` | LoRA_cot_fs(k) | Direct | `RUN_TRAIN_COT_FS` |
+| `RUN_H10` | LoRA_cot_fs(k) | CoT-FS(k) | `RUN_TRAIN_COT_FS` |
+
+其余训练/评测参数（如 batch、max_tokens、num_samples）统一在对应脚本顶部手动设置：
+
+- `train/train.py`（LoRA_code 训练参数）
+- `train/train_cot.py`（CoT 训练参数）
+- `evaluation/eval_base_passk.py`（Base 评测参数）
+- `evaluation/eval_lora_passk.py`（LoRA + Direct 评测参数）
+- `evaluation/eval_lora_cot_passk.py`（CoT 两阶段评测参数）
+
+参数设置位置（重点，按文件就近修改）：
+
+| 目标 | 文件 | 关键参数 |
+| --- | --- | --- |
+| 控制训练/评测开关 | `scripts/train_eval.sh` | `RUN_TRAIN_CODE`、`RUN_TRAIN_COT_ZS`、`RUN_TRAIN_COT_FS`、`FS_K`、`RUN_H1~H10` |
+| LoRA_code 训练 | `train/train.py` | `BATCH_SIZE`、`GRADIENT_ACCUMULATION`、`MAX_LENGTH`、`LORA_R`、`LORA_ALPHA` |
+| CoT 训练稳定性 | `train/train_cot.py` | `BATCH_SIZE`、`GRADIENT_ACCUMULATION`、`MAX_LENGTH` |
+| CoT 评测速度/卡顿 | `evaluation/eval_lora_cot_passk.py` | `BATCH_SIZE`、`MAX_REASONING_PROMPT_TOKENS`、`MAX_REASONING_CHARS` |
+| CoT 评测统计稳定性 | `evaluation/eval_lora_cot_passk.py` | `NUM_SAMPLES`、`TEMPERATURE` |
+| CoT 评测超时/显存 | `evaluation/eval_lora_cot_passk.py` | `TIMEOUT`、`MAX_TOKENS_REASONING`、`MAX_TOKENS_CODE` |
+
+性能排障（现象 -> 优先调整）：
+
+- 代码生成阶段长时间不动：`eval_lora_cot_passk.py` 中 `BATCH_SIZE` 先降到 `2`
+- 显存 OOM：下调 `MAX_TOKENS_REASONING`、`MAX_TOKENS_CODE`
+- 仍然偏慢：下调 `NUM_SAMPLES`（会降低 pass@10 稳定性）
+- 推理过长拖慢二阶段：下调 `MAX_REASONING_PROMPT_TOKENS` 或 `MAX_REASONING_CHARS`
+- 训练侧 OOM：`train_cot.py` 中 `BATCH_SIZE` 降低并同步提高 `GRADIENT_ACCUMULATION`
+
+#### CoT 训练与评测（H7~H10）
+
+- **LoRA_cot_zs**（H7/H8）：`train_cot.py --num-few-shots 0` → 产出 `latest_lora_cot_zs_adapter.txt`，评测用 `--few-shot-k 0`
+- **LoRA_cot_fs(k)**（H9/H10）：`train_cot.py --num-few-shots ${FS_K}` → 产出 `latest_lora_cot_fs${FS_K}_adapter.txt`，评测用 `--few-shot-k ${FS_K}`
+- 两者都是从基座重新训练 CoT LoRA（不是在 LoRA_code 上继续训）
+- CoT 评测是两阶段：先生成推理再生成代码；`eval_lora_cot_passk.py` 默认包含截断与小 batch 稳定策略
+
 也可分步执行：
 
 ```bash
@@ -438,8 +575,10 @@ python3 evaluation/eval_lora_passk.py
 #### 查看结果
 
 ```bash
-cat evaluation/results/eval_base_passk.txt
-cat evaluation/results/eval_lora_passk.txt
+cat evaluation/results/eval_base_passk_h1_base_direct.json
+cat evaluation/results/eval_lora_passk_h4_lora_code_direct.json
+cat evaluation/results/eval_lora_cot_passk_h8_lora_cot_zs_cot_zs.json
+cat evaluation/results/eval_lora_cot_passk_h10_lora_cot_fs2_cot_fs2.json
 # TensorBoard（可选）：tensorboard --logdir train/outputs/ --bind_all
 # 从本机浏览器访问时，需通过 SSH 隧道或在服务器侧放行对应端口（如 6006）
 ```
@@ -450,7 +589,7 @@ cat evaluation/results/eval_lora_passk.txt
 
 ```bash
 mkdir -p evaluation/results train/outputs
-scp -P 23822 ubuntu@116.172.94.6:~/yejunyin/graduationDesign/ati-codegen/evaluation/results/*.txt ./evaluation/results/
+scp -P 23822 ubuntu@116.172.94.6:~/yejunyin/graduationDesign/ati-codegen/evaluation/results/*.json ./evaluation/results/
 scp -r -P 23822 ubuntu@116.172.94.6:~/yejunyin/graduationDesign/ati-codegen/train/outputs/ ./train/
 ```
 
@@ -460,14 +599,14 @@ scp -r -P 23822 ubuntu@116.172.94.6:~/yejunyin/graduationDesign/ati-codegen/trai
 
 如果遇到 OOM（显存不足），可以调整以下参数：
 
-**训练** (`train/train.py` 顶部)：
+**训练** (`train/train.py` 与 `train/train_cot.py` 顶部，二者共享同一组优化器超参)：
 
 
-| 参数                      | 默认值  | 显存不足时           |
-| ----------------------- | ---- | --------------- |
-| `BATCH_SIZE`            | 4    | 降为 2 或 1        |
-| `GRADIENT_ACCUMULATION` | 8    | 相应增大以保持等效 batch |
-| `MAX_LENGTH`            | 1024 | 降为 512          |
+| 参数                      | 默认值（当前）| 调整方向 |
+| ----------------------- | ----------- | --------- |
+| `BATCH_SIZE`            | 1           | 已为下界（9B + bf16 + grad-ckpt 在 32GB 卡上的物理极限）；不可再降 |
+| `GRADIENT_ACCUMULATION` | 32          | 与 `BATCH_SIZE` 配合保持等效 batch=32；如需缩短训练耗时可减小，但可能影响收敛 |
+| `MAX_LENGTH`            | 1024（`train.py`）/ 2048（`train_cot.py`）| 进一步压显存：`train_cot.py --max-length 1536`（不宜低于 512）|
 
 
 **评测** (`evaluation/eval_base_passk.py` 和 `eval_lora_passk.py` 顶部)：
@@ -482,9 +621,9 @@ scp -r -P 23822 ubuntu@116.172.94.6:~/yejunyin/graduationDesign/ati-codegen/trai
 
 > **按显存粗调的参考**：
 >
-> - **约 80GB 显存**：训练与评测可用默认参数
-> - **约 24GB 显存**：默认一般可用；评测可将 `GPU_MEMORY_UTILIZATION` 降至 0.85
-> - **16GB 显存**：训练建议 `BATCH_SIZE=1, GRADIENT_ACCUMULATION=32, MAX_LENGTH=512`；评测 `GPU_MEMORY_UTILIZATION=0.7, VLLM_MAX_MODEL_LEN=1024`
+> - **约 80GB 显存（A100/H100）**：训练可放宽 `BATCH_SIZE` 至 2~4 并相应缩小 `GRADIENT_ACCUMULATION` 保持等效 batch=32；评测可用默认
+> - **约 32GB 显存（V100-32G / RTX 5090）**：当前默认 `BATCH_SIZE=1, GRADIENT_ACCUMULATION=32, train.py MAX_LENGTH=1024 / train_cot.py MAX_LENGTH=2048` 即为该档位实测可跑配置
+> - **24GB 及以下显存**：`train_cot.py` 进一步使用 `--max-length 1536`；评测 `GPU_MEMORY_UTILIZATION=0.7, VLLM_MAX_MODEL_LEN=1024`
 
 ---
 
@@ -506,20 +645,6 @@ scp -r -P 23822 ubuntu@116.172.94.6:~/yejunyin/graduationDesign/ati-codegen/trai
   ]
 }
 ```
-
-### 评测结果
-
-在 KodCode 评测集（1000 题）上的 pass@k 结果：
-
-
-| 指标          | 基座模型   | LoRA 微调后 | 提升      |
-| ----------- | ------ | -------- | ------- |
-| **pass@1**  | 59.60% | 67.50%   | +7.90%  |
-| **pass@5**  | 73.00% | 84.00%   | +11.00% |
-| **pass@10** | 77.70% | 88.70%   | +11.00% |
-
-
-> 参数：每题采样 10 次，temperature=0.7，子进程执行超时 5 秒。
 
 ---
 
@@ -564,10 +689,13 @@ dos2unix scripts/*.sh
 A: 长任务必须用 `tmux` 或 `nohup` 运行，见上文「运行训练与评测」。断开 SSH 不会结束服务器上已脱离的 `tmux` 会话。
 
 **Q: 训练时 OOM？**
-A: 降低 `train/train.py` 中的 `BATCH_SIZE`（如从 4 降为 2），同时增大 `GRADIENT_ACCUMULATION`（如从 8 增到 16）。参考「显存调优」章节中按显存的参考配置。
+A: 默认配置 `BATCH_SIZE=1, GRADIENT_ACCUMULATION=32` 已是 32GB 卡的下界，不可再降 batch；`train_cot.py` 改用 `--max-length 1536`（不低于 512）即可释放约 1~2GB 显存。参考「显存调优」章节中按显存的参考配置。
 
 **Q: 评测时 OOM？**
 A: 降低评测脚本中的 `GPU_MEMORY_UTILIZATION`（如从 0.9 降为 0.7）和 `VLLM_MAX_MODEL_LEN`（如从 2048 降为 1024）。
+
+**Q: CoT 评测卡在“代码进度 1%~5%”很久不动？**
+A: 通常不是死锁，而是某个批次 prompt 过长导致整批返回慢。当前一键脚本已内置较稳参数（小 batch + 推理拼接截断）来降低这种现象。若仍偏慢，优先确认 GPU 负载、数据盘 IO、以及是否有其他任务占用显存。
 
 **Q: `latest_lora_adapter.txt` 路径不对？**
 A: 该文件在训练完成后自动生成，内容为 adapter 的绝对路径。如果把项目移到了新位置，需要手动修改文件内容指向正确路径，或重新训练。
@@ -596,15 +724,15 @@ A: 除服务器本机防火墙（如 `ufw`）外，云厂商或机房还可能�
 
 - **Git LFS 指针文件**：仓库里大文件（数据集/模型等）用 LFS 管理，普通 `git clone` 只会拿到“指针文件”，必须 `git lfs pull` 才会拉到真实内容
 - **pip 下载超时**：国内网络直连国外 PyPI 容易超时；升级 pip + 设置国内镜像，可以减少下载被重定向到国外源
-- **模型软链接对齐**：脚本写死读取 `models/Qwen2.5-Coder-7B-Instruct`；把模型放在数据盘时，用软链接既省系统盘又不改代码
+- **模型软链接对齐**：脚本写死读取 `models/CodeGeeX4-ALL-9B`；把模型放在数据盘时，用软链接既省系统盘又不改代码
 - **tmux 保活**：训练/评测是长任务，tmux 会话不受 SSH 断开影响
 
 ### 注意事项
 
 1. **操作系统**：必须在 Linux 上运行（vLLM 不支持 Windows / macOS），推荐使用 Ubuntu 22.04 / 20.04
-2. **模型路径硬编码**：`models/Qwen2.5-Coder-7B-Instruct` 在多个脚本中硬编码，请确保模型在此路径下（或通过软链接指向大盘上的实际目录）
+2. **模型路径硬编码**：`models/CodeGeeX4-ALL-9B` 在多个脚本中硬编码，请确保模型在此路径下（或通过软链接指向大盘上的实际目录）
 3. **`latest_lora_adapter.txt`**：训练完成后自动写入适配器路径，LoRA 评测脚本读取此文件
 4. **数据验证耗时**：`convet_KodCode_to_jsonl.py` 会 exec 每条代码做正确性验证，10,000 条可能需要较长时间
-5. **磁盘空间**：模型约 14GB + 训练输出约 1–2GB，建议预留 ≥100GB 可用空间用于数据与 checkpoint
+5. **磁盘空间**：模型约 18GB + 训练输出约 1–2GB，建议预留 ≥100GB 可用空间用于数据与 checkpoint
 6. **计费与资源**：若使用按量计费 GPU，任务结束后及时关机或释放实例；重要结果请先 `scp` 或推送到仓库/对象存储备份
 7. **网络访问**：SSH 端口可能非 22（如 `23822`）；对外暴露 TensorBoard 优先使用 SSH 隧道，见上文常见问题

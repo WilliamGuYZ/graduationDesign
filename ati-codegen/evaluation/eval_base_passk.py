@@ -1,8 +1,9 @@
 """
-Qwen2.5-Coder-7B-Instruct 评估脚本
+CodeGeeX4-ALL-9B 评估脚本
 数据格式: {"question": "...", "solution": "...", "thought_step": "...", "test": "...", "test_info": [...], "tags": [...]}
 """
 
+import argparse
 import gc
 import json
 import os
@@ -39,7 +40,7 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 _PROJECT_ROOT = os.path.dirname(_HERE)
 _SCRIPTS = os.path.join(_PROJECT_ROOT, "scripts")
 
-MODEL_PATH   = os.path.join(_PROJECT_ROOT, "models", "Qwen2.5-Coder-7B-Instruct")
+MODEL_PATH   = os.path.join(_PROJECT_ROOT, "models", "CodeGeeX4-ALL-9B")
 DATASET_PATH = os.path.join(_PROJECT_ROOT, "data", "processed", "KodCode_eval.jsonl")
 RESULTS_DIR  = os.path.join(_PROJECT_ROOT, "evaluation", "results")
 
@@ -189,10 +190,22 @@ def execute_test_with_debug(
 # =========================
 
 def main():
+    parser = argparse.ArgumentParser(description="Base 模型 pass@k 评测（H1）")
+    parser.add_argument(
+        "--result-suffix",
+        type=str,
+        default="",
+        help="结果文件名后缀，写入 eval_base_passk_<suffix>.json；不传则仍为 eval_base_passk.json",
+    )
+    args = parser.parse_args()
+
+    if not os.path.isfile(DATASET_PATH):
+        raise FileNotFoundError(f"未找到数据文件: {DATASET_PATH}")
+    if not os.path.isdir(MODEL_PATH):
+        raise FileNotFoundError(f"未找到基座模型目录: {MODEL_PATH}")
+
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-    print("=" * 60)
-    print("加载 Tokenizer...")
     print("=" * 60)
     
     tokenizer = AutoTokenizer.from_pretrained(
@@ -215,6 +228,7 @@ def main():
     )
     
     sampling_params = SamplingParams(
+        n=NUM_SAMPLES,              # 一个 prompt 内部采样 NUM_SAMPLES 次，相比外层复制 prompt 效率高 2-4×
         temperature=TEMPERATURE,
         max_tokens=MAX_TOKENS,
         top_p=0.95,
@@ -299,11 +313,10 @@ def main():
     
     for idx, data in enumerate(dataset):
         prompt = build_chat_prompt(tokenizer, data["question"], data["func_name"], data["params"])
-        for _ in range(NUM_SAMPLES):
-            all_prompts.append(prompt)
-            prompt_to_problem_idx.append(idx)
+        all_prompts.append(prompt)
+        prompt_to_problem_idx.append(idx)
     
-    print(f"总生成请求: {len(all_prompts)} 个")
+    print(f"总生成请求: {len(all_prompts)} 个 × n={NUM_SAMPLES} samples/prompt")
     
     print("\n" + "=" * 60)
     print("开始生成...")
@@ -321,18 +334,23 @@ def main():
     problem_results: List[List[bool]] = [[] for _ in range(len(dataset))]
     timeout_count = 0
 
-    for data_idx, output in tqdm(zip(prompt_to_problem_idx, outputs), total=len(all_prompts)):
-        generated = output.outputs[0].text
-        code = extract_code(generated)
-        passed, error, _, _, _ = execute_test_with_debug(
-            code, dataset[data_idx]["test_code"], dataset[data_idx]["func_name"], data_idx
-        )
-        if error and "超时" in str(error):
-            timeout_count += 1
-        problem_results[data_idx].append(passed)
+    total_samples = len(all_prompts) * NUM_SAMPLES
+    pbar = tqdm(total=total_samples)
+    for data_idx, output in zip(prompt_to_problem_idx, outputs):
+        for completion in output.outputs:      # n=NUM_SAMPLES 时每个 output 带 NUM_SAMPLES 条 completion
+            generated = completion.text
+            code = extract_code(generated)
+            passed, error, _, _, _ = execute_test_with_debug(
+                code, dataset[data_idx]["test_code"], dataset[data_idx]["func_name"], data_idx
+            )
+            if error and "超时" in str(error):
+                timeout_count += 1
+            problem_results[data_idx].append(passed)
+            pbar.update(1)
+    pbar.close()
 
     if timeout_count:
-        print(f"\n⚠️ 超时: {timeout_count}/{len(all_prompts)} 次 ({timeout_count/len(all_prompts)*100:.1f}%)")
+        print(f"\n⚠️ 超时: {timeout_count}/{total_samples} 次 ({timeout_count/total_samples*100:.1f}%)")
 
     # ── pass@k（无偏估计）────────────────────────────────────────────────────
     K_LIST         = [1, 5, 10]
@@ -365,8 +383,8 @@ def main():
 
     os.makedirs(RESULTS_DIR, exist_ok=True)
 
-    # 最终输出文件（固定文件名，每次运行覆盖）
-    output_file = os.path.join(RESULTS_DIR, "eval_base_passk.json")
+    suffix = f"_{args.result_suffix.strip()}" if args.result_suffix.strip() else ""
+    output_file = os.path.join(RESULTS_DIR, f"eval_base_passk{suffix}.json")
 
     # 构建结果字典（只包含 summary）
     results = {

@@ -1,0 +1,20 @@
+{
+  "timestamp": "2026-05-22_11-12-48",
+  "mode": "two_stage_cot",
+  "use_lora": false,
+  "lora_path": "",
+  "num_problems": 1000,
+  "num_samples": 10,
+  "few_shot_k": 0,
+  "batch_size": 4,
+  "pass_at_k": {
+    "pass@1": 0.5410,
+    "pass@5": 0.6890,
+    "pass@10": 0.7450
+  },
+  "generation_stats": {
+    "empty_reasoning": 12,
+    "empty_code": 7,
+    "timeouts": 38
+  }
+}

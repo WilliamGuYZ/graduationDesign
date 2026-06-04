@@ -21,7 +21,7 @@ from transformers import AutoTokenizer
 
 # ==================== 配置参数 ====================
 # 本地模型路径
-LOCAL_MODEL_PATH = "models/Qwen2.5-Coder-7B-Instruct"
+LOCAL_MODEL_PATH = "models/CodeGeeX4-ALL-9B"
 
 # 输入数据文件路径
 INPUT_JSONL = "data/raw/KodCode.jsonl"

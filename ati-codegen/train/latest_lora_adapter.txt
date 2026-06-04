@@ -1,1 +1,1 @@
-/home/ubuntu/yejunyin/graduationDesign/ati-codegen/train/outputs/qwen_lora_20260422_150016/lora_adapter
+/home/ubuntu/yejunyin/graduationdesign/ati-codegen/train/outputs/codegeex4_lora_20260520_164120/lora_adapter
